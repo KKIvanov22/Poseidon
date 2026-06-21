@@ -1,0 +1,189 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
+using Npgsql;
+using Poseidon.Server.Data;
+using Poseidon.Server.Data.Entities;
+
+namespace Poseidon.Server.Endpoints;
+
+public static class AuthEndpoints
+{
+    private const int StudentRoleId = 1;
+
+    public static RouteGroupBuilder MapAuthEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        RouteGroupBuilder group = endpoints.MapGroup("/auth").WithTags("Auth");
+
+        group.MapPost("/register", RegisterAsync).WithName("Register");
+        group.MapPost("/login", LoginAsync).WithName("Login");
+        group.MapPost("/logout", Logout).RequireAuthorization().WithName("Logout");
+
+        return group;
+    }
+
+    private static async Task<Results<Created<AuthResponse>, Conflict<ProblemHttpResult>, BadRequest<ProblemHttpResult>>> RegisterAsync(
+        RegisterRequest request,
+        AppDbContext dbContext,
+        IOptions<JwtOptions> jwtOptions)
+    {
+        string email = NormalizeEmail(request.Email);
+        if (string.IsNullOrWhiteSpace(email) ||
+            string.IsNullOrWhiteSpace(request.Password) ||
+            string.IsNullOrWhiteSpace(request.DisplayName))
+        {
+            return TypedResults.BadRequest(TypedResults.Problem("Email, password, and displayName are required."));
+        }
+
+        var user = new User
+        {
+            Email = email,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+            DisplayName = request.DisplayName.Trim(),
+            RoleId = StudentRoleId
+        };
+
+        dbContext.Users.Add(user);
+
+        try
+        {
+            await dbContext.SaveChangesAsync();
+        }
+        catch (DbUpdateException exception) when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+        {
+            return TypedResults.Conflict(TypedResults.Problem("A user with this email already exists."));
+        }
+
+        user.Role = await dbContext.UserRoles.FindAsync(user.RoleId);
+        return TypedResults.Created($"/users/{user.UserId}", CreateAuthResponse(user, jwtOptions.Value));
+    }
+
+    private static async Task<Results<Ok<AuthResponse>, UnauthorizedHttpResult, BadRequest<ProblemHttpResult>>> LoginAsync(
+        LoginRequest request,
+        AppDbContext dbContext,
+        IOptions<JwtOptions> jwtOptions)
+    {
+        string email = NormalizeEmail(request.Email);
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return TypedResults.BadRequest(TypedResults.Problem("Email and password are required."));
+        }
+
+        User? user = await dbContext.Users
+            .Include(user => user.Role)
+            .SingleOrDefaultAsync(user => user.Email.ToLower() == email);
+
+        if (user is null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        {
+            return TypedResults.Unauthorized();
+        }
+
+        return TypedResults.Ok(CreateAuthResponse(user, jwtOptions.Value));
+    }
+
+    private static Ok<LogoutResponse> Logout()
+    {
+        return TypedResults.Ok(new LogoutResponse("Logged out. Discard the bearer token on the client."));
+    }
+
+    private static AuthResponse CreateAuthResponse(User user, JwtOptions options)
+    {
+        DateTimeOffset expiresAt = DateTimeOffset.UtcNow.AddMinutes(options.ExpirationMinutes);
+
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, user.UserId.ToString()),
+            new(JwtRegisteredClaimNames.Email, user.Email),
+            new(JwtRegisteredClaimNames.Name, user.DisplayName),
+            new(ClaimTypes.NameIdentifier, user.UserId.ToString()),
+            new(ClaimTypes.Role, user.Role?.RoleName ?? "Student")
+        };
+
+        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.SigningKey));
+        var credentials = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
+
+        var token = new JwtSecurityToken(
+            issuer: options.Issuer,
+            audience: options.Audience,
+            claims: claims,
+            expires: expiresAt.UtcDateTime,
+            signingCredentials: credentials);
+
+        return new AuthResponse(
+            user.UserId,
+            user.Email,
+            user.DisplayName,
+            user.Role?.RoleName ?? "Student",
+            new JwtSecurityTokenHandler().WriteToken(token),
+            expiresAt);
+    }
+
+    private static string NormalizeEmail(string email)
+    {
+        return email.Trim().ToLowerInvariant();
+    }
+}
+
+public sealed record RegisterRequest(string Email, string Password, string DisplayName);
+
+public sealed record LoginRequest(string Email, string Password);
+
+public sealed record AuthResponse(
+    Guid UserId,
+    string Email,
+    string DisplayName,
+    string Role,
+    string AccessToken,
+    DateTimeOffset ExpiresAt);
+
+public sealed record LogoutResponse(string Message);
+
+public sealed class JwtOptions
+{
+    public const string SectionName = "Jwt";
+
+    public string Issuer { get; init; } = "Poseidon";
+    public string Audience { get; init; } = "Poseidon";
+    public string SigningKey { get; init; } = string.Empty;
+    public int ExpirationMinutes { get; init; } = 60;
+}
+
+public static class JwtAuthenticationExtensions
+{
+    public static IServiceCollection AddJwtAuthentication(this IServiceCollection services, IConfiguration configuration)
+    {
+        JwtOptions jwtOptions = configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
+        if (string.IsNullOrWhiteSpace(jwtOptions.SigningKey))
+        {
+            throw new InvalidOperationException("Jwt:SigningKey must be configured.");
+        }
+
+        services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
+
+        services
+            .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidIssuer = jwtOptions.Issuer,
+                    ValidateAudience = true,
+                    ValidAudience = jwtOptions.Audience,
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SigningKey)),
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromMinutes(1)
+                };
+            });
+
+        services.AddAuthorization();
+
+        return services;
+    }
+}
