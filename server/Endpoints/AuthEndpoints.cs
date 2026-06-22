@@ -20,9 +20,31 @@ public static class AuthEndpoints
     {
         RouteGroupBuilder group = endpoints.MapGroup("/auth").WithTags("Auth");
 
-        group.MapPost("/register", RegisterAsync).WithName("Register");
-        group.MapPost("/login", LoginAsync).WithName("Login");
-        group.MapPost("/logout", Logout).RequireAuthorization().WithName("Logout");
+        group.MapPost("/register", RegisterAsync)
+            .WithName("Register")
+            .WithSummary("Register a student")
+            .WithDescription("Creates a student account and returns a JWT access token for the new user.")
+            .Accepts<RegisterRequest>("application/json")
+            .Produces<AuthResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        group.MapPost("/login", LoginAsync)
+            .WithName("Login")
+            .WithSummary("Log in")
+            .WithDescription("Authenticates a user with email and password and returns a JWT access token.")
+            .Accepts<LoginRequest>("application/json")
+            .Produces<AuthResponse>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status400BadRequest);
+
+        group.MapPost("/logout", Logout)
+            .RequireAuthorization()
+            .WithName("Logout")
+            .WithSummary("Log out")
+            .WithDescription("Requires a bearer token and tells the client to discard it. JWT logout is client-side only.")
+            .Produces<LogoutResponse>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
 
         return group;
     }
