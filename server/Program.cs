@@ -64,5 +64,6 @@ app.MapGet("/health/ping", () => Results.Ok(new
 .Produces(StatusCodes.Status200OK);
 
 app.MapAuthEndpoints();
+app.MapUserEndpoints();
 
 app.Run();
