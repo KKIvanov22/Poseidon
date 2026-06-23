@@ -3,6 +3,7 @@ using Microsoft.OpenApi;
 using Poseidon.Server.Data;
 using Poseidon.Server.Endpoints;
 using Poseidon.Server.Services;
+using Poseidon.Server.Services.Notifications;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,6 +38,7 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 builder.Services.AddScoped<IRegistrationOrchestrator, RegistrationOrchestrator>();
+builder.Services.AddNotificationMessaging(builder.Configuration);
 builder.Services.AddJwtAuthentication(builder.Configuration);
 
 var app = builder.Build();

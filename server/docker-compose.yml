@@ -15,6 +15,11 @@ services:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       ASPNETCORE_URLS: http://+:8080
       ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-poseidon};Username=${POSTGRES_APP_USER:-poseidon_app};Password=${POSTGRES_APP_PASSWORD:-poseidon_app_dev_password}
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__Port: 5672
+      RabbitMq__UserName: ${RABBITMQ_DEFAULT_USER:-poseidon}
+      RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS:-poseidon_dev_password}
+      RabbitMq__VirtualHost: /
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health/ping"]
       interval: 10s
