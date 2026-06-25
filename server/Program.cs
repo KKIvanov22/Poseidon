@@ -6,6 +6,8 @@ using Poseidon.Server.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+const string ClientCorsPolicy = "ClientCorsPolicy";
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -38,6 +40,20 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 builder.Services.AddScoped<IRegistrationOrchestrator, RegistrationOrchestrator>();
 builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddCors(options =>
+{
+    string[] allowedOrigins = builder.Configuration
+        .GetSection("Cors:AllowedOrigins")
+        .Get<string[]>() ?? ["http://localhost:3000"];
+
+    options.AddPolicy(ClientCorsPolicy, policy =>
+    {
+        policy
+            .WithOrigins(allowedOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
 
 var app = builder.Build();
 
@@ -48,6 +64,7 @@ app.UseSwaggerUI(options =>
     options.RoutePrefix = "swagger";
 });
 
+app.UseCors(ClientCorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 
