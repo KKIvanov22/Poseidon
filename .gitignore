@@ -29,3 +29,5 @@ packages/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+node_modules/
