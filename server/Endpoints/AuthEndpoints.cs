@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
+using Poseidon.Server.Auth;
 using Poseidon.Server.Data;
 using Poseidon.Server.Data.Entities;
 
@@ -116,6 +117,7 @@ public static class AuthEndpoints
     private static AuthResponse CreateAuthResponse(User user, JwtOptions options)
     {
         DateTimeOffset expiresAt = DateTimeOffset.UtcNow.AddMinutes(options.ExpirationMinutes);
+        string role = user.Role?.RoleName ?? "Student";
 
         var claims = new List<Claim>
         {
@@ -123,7 +125,7 @@ public static class AuthEndpoints
             new(JwtRegisteredClaimNames.Email, user.Email),
             new(JwtRegisteredClaimNames.Name, user.DisplayName),
             new(ClaimTypes.NameIdentifier, user.UserId.ToString()),
-            new(ClaimTypes.Role, user.Role?.RoleName ?? "Student")
+            new(JwtClaimNames.Role, role)
         };
 
         var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.SigningKey));
@@ -140,7 +142,7 @@ public static class AuthEndpoints
             user.UserId,
             user.Email,
             user.DisplayName,
-            user.Role?.RoleName ?? "Student",
+            role,
             new JwtSecurityTokenHandler().WriteToken(token),
             expiresAt);
     }
@@ -200,7 +202,9 @@ public static class JwtAuthenticationExtensions
                     ValidateIssuerSigningKey = true,
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SigningKey)),
                     ValidateLifetime = true,
-                    ClockSkew = TimeSpan.FromMinutes(1)
+                    ClockSkew = TimeSpan.FromMinutes(1),
+                    RoleClaimType = JwtClaimNames.Role,
+                    NameClaimType = JwtRegisteredClaimNames.Name
                 };
             });
 

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
+using Poseidon.Server.Auth;
 using Poseidon.Server.Data;
 using Poseidon.Server.Data.Entities;
 
@@ -16,12 +17,14 @@ public static class EventEndpoints
 
         // BE06: POST /events
         group.MapPost("/", CreateAsync)
+            .RequireRole(UserRoles.Teacher, UserRoles.Admin)
             .WithName("CreateEvent")
             .WithSummary("Create a new event")
             .Accepts<CreateEventRequest>("application/json")
             .Produces<EventResponse>(StatusCodes.Status201Created)
             .ProducesProblem(StatusCodes.Status400BadRequest)
-            .Produces(StatusCodes.Status401Unauthorized);
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status403Forbidden);
 
         // BE07: GET /events
         group.MapGet("/", GetAllAsync)
@@ -40,6 +43,7 @@ public static class EventEndpoints
 
         // BE09: PUT /events/{id}
         group.MapPut("/{id:guid}", UpdateAsync)
+            .RequireRole(UserRoles.Teacher, UserRoles.Admin)
             .WithName("UpdateEvent")
             .WithSummary("Update an existing draft event")
             .Accepts<UpdateEventRequest>("application/json")
@@ -51,6 +55,7 @@ public static class EventEndpoints
 
         // BE10: POST /events/{id}/publish
         group.MapPost("/{id:guid}/publish", PublishAsync)
+            .RequireRole(UserRoles.Teacher, UserRoles.Admin)
             .WithName("PublishEvent")
             .WithSummary("Publish a draft event to make it public")
             .Produces<EventResponse>(StatusCodes.Status200OK)
@@ -61,6 +66,7 @@ public static class EventEndpoints
 
         // BE11: POST /events/{id}/cancel
         group.MapPost("/{id:guid}/cancel", CancelAsync)
+            .RequireRole(UserRoles.Teacher, UserRoles.Admin)
             .WithName("CancelEvent")
             .WithSummary("Cancel a scheduled event")
             .Produces<EventResponse>(StatusCodes.Status200OK)
