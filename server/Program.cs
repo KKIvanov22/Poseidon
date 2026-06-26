@@ -1,3 +1,4 @@
+using System.Net.Mail;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using Poseidon.Server.Data;
@@ -40,6 +41,19 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 builder.Services.AddScoped<IRegistrationOrchestrator, RegistrationOrchestrator>();
 builder.Services.AddJwtAuthentication(builder.Configuration);
+
+// --- FluentEmail & Background Service Registration ---
+builder.Services
+    .AddFluentEmail("no-reply@poseidon.com", "Poseidon Events System")
+    .AddSmtpSender(() => new SmtpClient("localhost")
+    {
+        Port = 1025, // Maps to standard dev email tools like Mailpit
+        EnableSsl = false
+    });
+
+builder.Services.AddHostedService<NotificationConsumerService>();
+// -----------------------------------------------------
+
 builder.Services.AddCors(options =>
 {
     string[] allowedOrigins = builder.Configuration
@@ -83,5 +97,6 @@ app.MapGet("/health/ping", () => Results.Ok(new
 app.MapAuthEndpoints();
 app.MapUserEndpoints();
 app.MapEventEndpoints();
+app.MapWaitlistEndpoints(); // Maps the new waitlist retrieval route
 
 app.Run();
