@@ -1,9 +1,11 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Poseidon.Server.Auth;
 using Poseidon.Server.Data;
 using Poseidon.Server.Data.Entities;
+using Poseidon.Server.Services;
 
 namespace Poseidon.Server.Endpoints;
 
@@ -75,13 +77,17 @@ public static class EventEndpoints
             .Produces(StatusCodes.Status403Forbidden)
             .Produces(StatusCodes.Status404NotFound);
 
-        // BE12: POST /events/{id}/register (Skeleton)
-        group.MapPost("/{id:guid}/register", RegisterSkeletonAsync)
-            .WithName("RegisterForEventSkeleton")
-            .WithSummary("Skeleton endpoint for joining an event")
-            .Produces<object>(StatusCodes.Status202Accepted)
+        // BE12: POST /events/{id}/register
+        group.MapPost("/{id:guid}/register", RegisterAsync)
+            .RequireRole(UserRoles.Student)
+            .WithName("RegisterForEvent")
+            .WithSummary("Register the current student for a published event")
+            .Produces<RegistrationResponse>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status401Unauthorized)
-            .Produces(StatusCodes.Status404NotFound);
+            .Produces(StatusCodes.Status403Forbidden)
+            .Produces(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
 
         return group;
     }
@@ -232,29 +238,78 @@ public static class EventEndpoints
         return TypedResults.Ok(MapToResponse(ev));
     }
 
-    // BE12: POST /events/{id}/register - Baseline skeleton placeholder
-    private static async Task<Results<Accepted<object>, NotFound>> RegisterSkeletonAsync(
+    // BE12: POST /events/{id}/register — validation here, confirmed/waitlist assignment in RegistrationOrchestrator
+    private static async Task<Results<Created<RegistrationResponse>, BadRequest<ProblemHttpResult>, NotFound, Conflict<ProblemHttpResult>>> RegisterAsync(
         Guid id,
         ClaimsPrincipal user,
-        AppDbContext dbContext)
+        AppDbContext dbContext,
+        IRegistrationOrchestrator registrationOrchestrator)
     {
         var ev = await dbContext.Events.AsNoTracking().FirstOrDefaultAsync(e => e.EventId == id);
-        if (ev is null) return TypedResults.NotFound();
-
-        string? userId = user.FindFirstValue(ClaimTypes.NameIdentifier);
-
-        // Skeleton tracking output response to let front-end developers mock user signups
-        var skeletonPayload = new
+        if (ev is null)
         {
-            Message = "Skeleton Registration Hook Success.",
-            EventId = id,
-            RegisteredUserId = userId,
-            Timestamp = DateTimeOffset.UtcNow,
-            Status = "PendingCapacityVerification"
-        };
+            return TypedResults.NotFound();
+        }
 
-        return TypedResults.Accepted($"/events/{id}/registration-status", (object)skeletonPayload);
+        if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out Guid studentId))
+        {
+            return TypedResults.BadRequest(TypedResults.Problem("Invalid user claim data."));
+        }
+
+        if (ev.EventStatusId != 2)
+        {
+            return TypedResults.BadRequest(TypedResults.Problem("Only published events accept registrations."));
+        }
+
+        if (ev.EndsAt <= DateTimeOffset.UtcNow)
+        {
+            return TypedResults.BadRequest(TypedResults.Problem("This event has already ended."));
+        }
+
+        bool alreadyRegistered = await dbContext.Database
+            .SqlQuery<bool>($"""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM public.registrations
+                    WHERE event_id = {id}
+                      AND student_id = {studentId}
+                      AND cancelled_at IS NULL
+                ) AS "Value"
+                """)
+            .SingleAsync();
+
+        if (alreadyRegistered)
+        {
+            return TypedResults.Conflict(TypedResults.Problem("You are already registered for this event."));
+        }
+
+        try
+        {
+            (Guid registrationId, int statusId) = await registrationOrchestrator.RegisterStudentTransactionAsync(id, studentId);
+
+            var response = new RegistrationResponse(
+                registrationId,
+                id,
+                studentId,
+                statusId,
+                MapRegistrationStatus(statusId),
+                DateTimeOffset.UtcNow);
+
+            return TypedResults.Created($"/events/{id}/registrations/{registrationId}", response);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            return TypedResults.Conflict(TypedResults.Problem("You are already registered for this event."));
+        }
     }
+
+    private static string MapRegistrationStatus(int statusId) => statusId switch
+    {
+        1 => "Confirmed",
+        2 => "Waitlisted",
+        3 => "Cancelled",
+        _ => "Unknown"
+    };
 
     private static EventResponse MapToResponse(Event e) =>
         new(e.EventId, e.OrganizerId, e.EventStatusId, e.Title, e.Description, e.StartsAt, e.EndsAt, e.Capacity, e.LocationText, e.CreatedAt);
@@ -263,3 +318,11 @@ public static class EventEndpoints
 public sealed record CreateEventRequest(string Title, string? Description, DateTimeOffset StartsAt, DateTimeOffset EndsAt, int Capacity, string? LocationText);
 public sealed record UpdateEventRequest(string Title, string? Description, DateTimeOffset StartsAt, DateTimeOffset EndsAt, int Capacity, string? LocationText);
 public sealed record EventResponse(Guid EventId, Guid OrganizerId, int EventStatusId, string Title, string? Description, DateTimeOffset StartsAt, DateTimeOffset EndsAt, int Capacity, string? LocationText, DateTimeOffset CreatedAt);
+
+public sealed record RegistrationResponse(
+    Guid RegistrationId,
+    Guid EventId,
+    Guid StudentId,
+    int RegistrationStatusId,
+    string RegistrationStatus,
+    DateTimeOffset RegisteredAt);
