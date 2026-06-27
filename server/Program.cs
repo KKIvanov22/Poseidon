@@ -52,6 +52,7 @@ builder.Services
     });
 
 builder.Services.AddHostedService<NotificationConsumerService>();
+builder.Services.AddHostedService<RabbitMqConsumerService>(); // WK-01 Worker activation hook
 // -----------------------------------------------------
 
 builder.Services.AddCors(options =>
