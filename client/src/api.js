@@ -58,4 +58,21 @@ export const logout = (token) =>
 
 export const getEvents = (token) => request('/events', { token });
 
+// --- INT-03 & INT-05: Registration Pipeline Integrations ---
+export const getMyRegistrations = (token) => 
+  request('/registrations/me', { token });
+
+export const getConfirmedRegistrations = (token) => 
+  request('/registrations/confirmed', { token });
+
+export const reserveEventSeat = (token, eventId) => 
+  request(`/registrations/event/${eventId}`, { method: 'POST', token });
+
+export const cancelEventSeat = (token, eventId) => 
+  request(`/registrations/event/${eventId}`, { method: 'DELETE', token });
+
+// --- INT-04: Organizer Live Waitlist Query Integration ---
+export const getEventWaitlist = (token, eventId) => 
+  request(`/events/${eventId}/waitlist`, { token });
+
 export { ApiError };

@@ -8,8 +8,19 @@ import {
   FiRefreshCw,
   FiAlertCircle,
   FiInbox,
+  FiCheckCircle,
+  FiClock,
+  FiList,
+  FiBell,
 } from 'react-icons/fi';
-import { getEvents, ApiError } from './api';
+import { 
+  getEvents, 
+  getMyRegistrations, 
+  reserveEventSeat, 
+  cancelEventSeat, 
+  getEventWaitlist, 
+  ApiError 
+} from './api';
 
 const STATUS_META = {
   1: { label: 'Draft', dot: 'bg-amber-400', pill: 'bg-amber-50 text-amber-700 ring-amber-200' },
@@ -95,9 +106,14 @@ function TimeBadge({ tone, label }) {
   );
 }
 
-function EventCard({ event, now, index }) {
+// --- INT-03 & INT-04: Modified EventCard component with multi-role action buttons ---
+function EventCard({ event, now, index, userRole, myRegistrations, onRegister, onCancel, onInspectWaitlist, processingId }) {
   const status = STATUS_META[event.eventStatusId] || FALLBACK_STATUS;
   const time = getTimeContext(event.startsAt, event.endsAt, event.eventStatusId, now);
+  const isActionable = event.eventStatusId === 2; // Only allow transaction intents on "Published" items
+
+  // Check if current student user has mapped registrations for this event
+  const userRegistration = myRegistrations.find(r => r.eventId === event.eventId);
 
   return (
     <div
@@ -133,6 +149,57 @@ function EventCard({ event, now, index }) {
           <span>{event.capacity} {event.capacity === 1 ? 'seat' : 'seats'} capacity</span>
         </div>
       </div>
+
+      {/* Action Boundary Insertion */}
+      <div className="mt-2 border-t border-slate-100 pt-4">
+        {userRole === 2 ? (
+          /* INT-04: Organizer administrative tools view loop */
+          <button
+            type="button"
+            onClick={() => onInspectWaitlist(event.eventId, event.title)}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 hover:text-brand-600 hover:border-brand-300"
+          >
+            <FiList /> Inspect Waitlist Live Status
+          </button>
+        ) : (
+          /* INT-03: Student user transaction controls flow */
+          isActionable ? (
+            userRegistration ? (
+              <div className="flex items-center justify-between gap-2">
+                <span className={`inline-flex items-center gap-1 text-sm font-bold ${userRegistration.statusId === 1 ? 'text-emerald-600' : 'text-amber-500'}`}>
+                  {userRegistration.statusId === 1 ? <FiCheckCircle /> : <FiClock />}
+                  {userRegistration.statusId === 1 ? 'Confirmed Seat' : 'On Waitlist'}
+                </span>
+                <button
+                  type="button"
+                  disabled={processingId === event.eventId}
+                  onClick={() => onCancel(event.eventId)}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 transition hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200 disabled:opacity-50"
+                >
+                  {processingId === event.eventId ? 'Processing...' : 'Cancel Seat'}
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={processingId === event.eventId}
+                onClick={() => onRegister(event.eventId)}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-bold text-white shadow-card transition hover:bg-brand-600 disabled:opacity-50"
+              >
+                {processingId === event.eventId ? 'Booking Seat...' : 'Register for Event'}
+              </button>
+            )
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="w-full rounded-lg bg-slate-50 border border-slate-100 py-2 text-xs font-medium text-slate-400 cursor-not-allowed"
+            >
+              Registrations locked
+            </button>
+          )
+        )}
+      </div>
     </div>
   );
 }
@@ -158,37 +225,111 @@ function CardSkeleton() {
 
 const Dashboard = ({ user, token, onLogout }) => {
   const [events, setEvents] = useState([]);
+  const [myRegistrations, setMyRegistrations] = useState([]);
+  const [selectedWaitlist, setSelectedWaitlist] = useState(null);
   const [status, setStatus] = useState('loading'); // loading | ready | error
   const [errorMessage, setErrorMessage] = useState('');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [now, setNow] = useState(new Date());
 
-  const loadEvents = useCallback(async () => {
+  // INT-05: Real-time user alert state configuration variables
+  const [systemAlert, setSystemAlert] = useState({ text: '', isError: false });
+  const [actionProcessingId, setActionProcessingId] = useState(null);
+
+  // Extract structural properties directly from security matrix
+  const userRole = user?.roleId || 1; // 1 = Student, 2 = Organizer
+
+  const triggerSystemAlert = useCallback((text, isError = false) => {
+    setSystemAlert({ text, isError });
+    setTimeout(() => setSystemAlert({ text: '', isError: false }), 4500);
+  }, []);
+
+  // INT-02 & INT-03: Core state fetcher pipeline 
+  const loadDashboardMetrics = useCallback(async () => {
     setStatus('loading');
     try {
+      // Fetch system events via centralized pipeline
       const data = await getEvents(token);
       setEvents(data);
+
+      // If actor profile resolves to student, catch existing registration structures
+      if (userRole === 1) {
+        const allocations = await getMyRegistrations(token);
+        setMyRegistrations(allocations || []);
+      }
       setStatus('ready');
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         onLogout();
         return;
       }
-      setErrorMessage(err.message || 'Something went wrong while loading events.');
+      setErrorMessage(err.message || 'Something went wrong while loading backend pipeline data.');
       setStatus('error');
     }
-  }, [token, onLogout]);
+  }, [token, onLogout, userRole]);
 
   useEffect(() => {
-    loadEvents();
-  }, [loadEvents]);
+    loadDashboardMetrics();
+  }, [loadDashboardMetrics]);
 
   // Keep "Live now" / relative timestamps fresh without re-fetching.
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // INT-03: Execute seat reservation intent handlers
+  const handleEventRegistration = async (eventId) => {
+    setActionProcessingId(eventId);
+    try {
+      const response = await reserveEventSeat(token, eventId);
+      
+      // INT-05: Catch text properties from response payload
+      triggerSystemAlert(response?.message || "Registration transaction resolved successfully!");
+      
+      // Refresh state indexes to synchronize visual tags
+      const updatedAllocations = await getMyRegistrations(token);
+      setMyRegistrations(updatedAllocations || []);
+      
+      // Refresh absolute master totals
+      const freshEvents = await getEvents(token);
+      setEvents(freshEvents);
+    } catch (err) {
+      triggerSystemAlert(err.message || "Failed to finalize structural booking allocation parameters.", true);
+    } finally {
+      setActionProcessingId(null);
+    }
+  };
+
+  // INT-03: Execute seat cancel intent handlers
+  const handleEventCancellation = async (eventId) => {
+    setActionProcessingId(eventId);
+    try {
+      const response = await cancelEventSeat(token, eventId);
+      triggerSystemAlert(response?.message || "Your registration status has been cleanly removed.");
+      
+      const updatedAllocations = await getMyRegistrations(token);
+      setMyRegistrations(updatedAllocations || []);
+
+      const freshEvents = await getEvents(token);
+      setEvents(freshEvents);
+    } catch (err) {
+      triggerSystemAlert(err.message || "An exception occurred handling cancellation routine execution.", true);
+    } finally {
+      setActionProcessingId(null);
+    }
+  };
+
+  // INT-04: Organizer administrative inspection loop handlers
+  const handleInspectWaitlist = async (eventId, title) => {
+    try {
+      const waitlistData = await getEventWaitlist(token, eventId);
+      setSelectedWaitlist({ title, items: waitlistData || [] });
+    } catch (err) {
+      triggerSystemAlert(err.message || "Could not read queue metrics records.", true);
+    }
+  };
 
   const stats = useMemo(() => {
     const tally = { total: events.length, 1: 0, 2: 0, 3: 0, 4: 0 };
@@ -222,7 +363,7 @@ const Dashboard = ({ user, token, onLogout }) => {
           <div className="flex items-center gap-4">
             <div className="hidden text-right sm:block">
               <p className="text-sm font-semibold text-ink">{user?.displayName || 'Welcome'}</p>
-              <p className="text-xs text-slate-400">{user?.email}</p>
+              <p className="text-xs text-slate-400">{userRole === 2 ? 'Organizer Account' : 'Student Account'}</p>
             </div>
             <button
               type="button"
@@ -236,6 +377,18 @@ const Dashboard = ({ user, token, onLogout }) => {
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-8">
+        {/* INT-05: Real-time System Toast Alerts Insertion point */}
+        {systemAlert.text && (
+          <div className={`mb-6 flex items-center gap-3 rounded-xl px-4 py-3 border text-sm font-bold shadow-sm animate-fade-in ${
+            systemAlert.isError 
+              ? 'border-accent-100 bg-accent-50 text-accent-700' 
+              : 'border-emerald-100 bg-emerald-50 text-emerald-700'
+          }`}>
+            <FiBell className="shrink-0 text-base" />
+            <p>System Update: {systemAlert.text}</p>
+          </div>
+        )}
+
         <div className="mb-8">
           <h1 className="font-display text-2xl font-bold text-ink sm:text-3xl">
             Welcome back{user?.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}
@@ -281,7 +434,7 @@ const Dashboard = ({ user, token, onLogout }) => {
             </div>
             <button
               type="button"
-              onClick={loadEvents}
+              onClick={loadDashboardMetrics}
               title="Refresh"
               className="flex items-center justify-center rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:border-brand-400 hover:text-brand-500"
             >
@@ -293,11 +446,11 @@ const Dashboard = ({ user, token, onLogout }) => {
         {status === 'error' && (
           <div className="flex flex-col items-center gap-3 rounded-2xl border border-accent-100 bg-accent-50 px-6 py-14 text-center">
             <FiAlertCircle className="text-3xl text-accent-600" />
-            <p className="font-semibold text-ink">Couldn't load events</p>
+            <p className="font-semibold text-ink">Couldn't load dashboard data</p>
             <p className="max-w-sm text-sm text-slate-500">{errorMessage}</p>
             <button
               type="button"
-              onClick={loadEvents}
+              onClick={loadDashboardMetrics}
               className="mt-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-600"
             >
               Try again
@@ -328,8 +481,65 @@ const Dashboard = ({ user, token, onLogout }) => {
         {status === 'ready' && filteredEvents.length > 0 && (
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {filteredEvents.map((event, i) => (
-              <EventCard key={event.eventId} event={event} now={now} index={i} />
+              <EventCard 
+                key={event.eventId} 
+                event={event} 
+                now={now} 
+                index={i} 
+                userRole={userRole}
+                myRegistrations={myRegistrations}
+                onRegister={handleEventRegistration}
+                onCancel={handleEventCancellation}
+                onInspectWaitlist={handleInspectWaitlist}
+                processingId={actionProcessingId}
+              />
             ))}
+          </div>
+        )}
+
+        {/* INT-04: Admin Waitlist Inspector Slide Drawer / Display Block panel */}
+        {selectedWaitlist && (
+          <div className="mt-10 rounded-2xl border border-slate-200 bg-white p-6 shadow-soft animate-fade-up">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="font-display text-lg font-bold text-ink">Waitlist Queue Matrix</h3>
+                <p className="text-sm text-slate-500">Reviewing real-time line entries for: <span className="font-semibold text-brand-600">{selectedWaitlist.title}</span></p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedWaitlist(null)}
+                className="rounded-lg border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 transition hover:bg-slate-50"
+              >
+                Close Panel
+              </button>
+            </div>
+            
+            {selectedWaitlist.items.length === 0 ? (
+              <div className="py-8 text-center text-sm text-slate-400 italic">
+                There are currently no students in this waitlist queue.
+              </div>
+            ) : (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-left text-sm text-slate-600">
+                  <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th className="px-4 py-3">Priority No.</th>
+                      <th className="px-4 py-3">Student Email Label</th>
+                      <th className="px-4 py-3">Queue Entry Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {selectedWaitlist.items.map((item, idx) => (
+                      <tr key={item.registrationId || idx} className="hover:bg-slate-50/50">
+                        <td className="px-4 py-3 font-display font-bold text-brand-600">#{idx + 1}</td>
+                        <td className="px-4 py-3 font-medium text-ink">{item.studentEmail || `ID Token: ${item.studentId?.substring(0, 8)}...`}</td>
+                        <td className="px-4 py-3 text-slate-400">{item.registeredAt ? new Date(item.registeredAt).toLocaleString() : 'N/A'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </main>
