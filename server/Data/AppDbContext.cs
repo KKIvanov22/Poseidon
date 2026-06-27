@@ -65,6 +65,14 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
 
+            // --- BE-18 Concurrency Token Config mapping via PostgreSQL system columns ---
+            entity.Property(e => e.RowVersion)
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .ValueGeneratedOnAddOrUpdate()
+                .IsConcurrencyToken();
+            // ----------------------------------------------------------------------------
+
             entity.HasOne(e => e.Organizer)
                 .WithMany()
                 .HasForeignKey(e => e.OrganizerId)

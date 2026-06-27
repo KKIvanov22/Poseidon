@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel.DataAnnotations;
 
 namespace Poseidon.Server.Data.Entities;
 
@@ -15,6 +16,10 @@ public sealed class Event
     public string? LocationText { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
+
+    // BE-18 Concurrency Token mapping
+    [ConcurrencyCheck]
+    public uint RowVersion { get; set; }
 
     public User? Organizer { get; set; }
 }
