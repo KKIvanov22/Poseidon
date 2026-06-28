@@ -8,6 +8,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<User> Users => Set<User>();
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<Event> Events => Set<Event>(); 
+    public DbSet<Registration> Registrations => Set<Registration>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -67,6 +68,36 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.HasOne(e => e.Organizer)
                 .WithMany()
                 .HasForeignKey(e => e.OrganizerId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<Registration>(entity =>
+        {
+            entity.ToTable("registrations", "public");
+            entity.HasKey(registration => registration.RegistrationId);
+
+            entity.Property(registration => registration.RegistrationId)
+                .HasColumnName("registration_id")
+                .HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(registration => registration.EventId).HasColumnName("event_id");
+            entity.Property(registration => registration.StudentId).HasColumnName("student_id");
+            entity.Property(registration => registration.RegistrationStatusId).HasColumnName("registration_status_id");
+            entity.Property(registration => registration.RegisteredAt)
+                .HasColumnName("registered_at")
+                .HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(registration => registration.CancelledAt).HasColumnName("cancelled_at");
+
+            entity.HasIndex(registration => new { registration.EventId, registration.RegistrationStatusId, registration.RegisteredAt })
+                .HasDatabaseName("ix_registrations_waitlist_order");
+
+            entity.HasOne(registration => registration.Event)
+                .WithMany()
+                .HasForeignKey(registration => registration.EventId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(registration => registration.Student)
+                .WithMany()
+                .HasForeignKey(registration => registration.StudentId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
     }

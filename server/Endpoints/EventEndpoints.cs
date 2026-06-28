@@ -1,9 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using Poseidon.Server.Auth;
-using Poseidon.Server.Data;
 using Poseidon.Server.Data.Entities;
 using Poseidon.Server.Services;
 
@@ -95,60 +92,34 @@ public static class EventEndpoints
     private static async Task<Results<Created<EventResponse>, BadRequest<ProblemHttpResult>>> CreateAsync(
         CreateEventRequest request,
         ClaimsPrincipal user,
-        AppDbContext dbContext)
+        IEventService eventService)
     {
-        string? nameIdentifier = user.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!Guid.TryParse(nameIdentifier, out Guid organizerId))
+        if (!TryGetUserId(user, out Guid organizerId))
         {
             return TypedResults.BadRequest(TypedResults.Problem("Invalid user claim data."));
         }
 
-        if (request.EndsAt <= request.StartsAt)
+        EventOperationResult<Event> result = await eventService.CreateAsync(organizerId, ToDetails(request));
+        if (result.Status == EventOperationStatus.BadRequest)
         {
-            return TypedResults.BadRequest(TypedResults.Problem("The event must end after it starts."));
-        }
-        if (request.Capacity < 1)
-        {
-            return TypedResults.BadRequest(TypedResults.Problem("Capacity must contain at least 1 seat."));
+            return TypedResults.BadRequest(TypedResults.Problem(result.Problem));
         }
 
-        var newEvent = new Event
-        {
-            OrganizerId = organizerId,
-            EventStatusId = 1, // 1 = Draft
-            Title = request.Title.Trim(),
-            Description = request.Description?.Trim(),
-            StartsAt = request.StartsAt,
-            EndsAt = request.EndsAt,
-            Capacity = request.Capacity,
-            LocationText = request.LocationText?.Trim()
-        };
-
-        dbContext.Events.Add(newEvent);
-        await dbContext.SaveChangesAsync();
-
+        Event newEvent = result.Value!;
         return TypedResults.Created($"/events/{newEvent.EventId}", MapToResponse(newEvent));
     }
 
-    private static async Task<Ok<List<EventResponse>>> GetAllAsync(AppDbContext dbContext)
+    private static async Task<Ok<List<EventResponse>>> GetAllAsync(IEventService eventService)
     {
-        var events = await dbContext.Events
-            .AsNoTracking()
-            .OrderByDescending(e => e.StartsAt)
-            .Select(e => MapToResponse(e))
-            .ToListAsync();
-
-        return TypedResults.Ok(events);
+        List<Event> events = await eventService.GetAllAsync();
+        return TypedResults.Ok(events.Select(MapToResponse).ToList());
     }
 
     private static async Task<Results<Ok<EventResponse>, NotFound>> GetByIdAsync(
         Guid id,
-        AppDbContext dbContext)
+        IEventService eventService)
     {
-        var ev = await dbContext.Events
-            .AsNoTracking()
-            .FirstOrDefaultAsync(e => e.EventId == id);
-
+        Event? ev = await eventService.GetByIdAsync(id);
         return ev is null ? TypedResults.NotFound() : TypedResults.Ok(MapToResponse(ev));
     }
 
@@ -157,150 +128,94 @@ public static class EventEndpoints
         Guid id,
         UpdateEventRequest request,
         ClaimsPrincipal user,
-        AppDbContext dbContext)
+        IEventService eventService)
     {
-        var ev = await dbContext.Events.FirstOrDefaultAsync(e => e.EventId == id);
-        if (ev is null) return TypedResults.NotFound();
-
-        // Security check: Only the original creator can modify this event
-        string? currentUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (ev.OrganizerId.ToString() != currentUserId) return TypedResults.Forbid();
-
-        // Rule check: Prevent changes if the event isn't a Draft anymore
-        if (ev.EventStatusId != 1)
+        if (!TryGetUserId(user, out Guid organizerId))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("Only draft events can be modified."));
+            return TypedResults.BadRequest(TypedResults.Problem("Invalid user claim data."));
         }
 
-        if (request.EndsAt <= request.StartsAt)
-        {
-            return TypedResults.BadRequest(TypedResults.Problem("The event must end after it starts."));
-        }
-
-        // Apply changes cleanly
-        ev.Title = request.Title.Trim();
-        ev.Description = request.Description?.Trim();
-        ev.StartsAt = request.StartsAt;
-        ev.EndsAt = request.EndsAt;
-        ev.Capacity = request.Capacity;
-        ev.LocationText = request.LocationText?.Trim();
-        ev.UpdatedAt = DateTimeOffset.UtcNow;
-
-        await dbContext.SaveChangesAsync();
-        return TypedResults.Ok(MapToResponse(ev));
+        EventOperationResult<Event> result = await eventService.UpdateAsync(id, organizerId, ToDetails(request));
+        return ToEventMutationHttpResult(result);
     }
 
     // BE10: POST /events/{id}/publish - Advance event status from Draft (1) to Published (2)
     private static async Task<Results<Ok<EventResponse>, BadRequest<ProblemHttpResult>, ForbidHttpResult, NotFound>> PublishAsync(
         Guid id,
         ClaimsPrincipal user,
-        AppDbContext dbContext)
+        IEventService eventService)
     {
-        var ev = await dbContext.Events.FirstOrDefaultAsync(e => e.EventId == id);
-        if (ev is null) return TypedResults.NotFound();
-
-        string? currentUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (ev.OrganizerId.ToString() != currentUserId) return TypedResults.Forbid();
-
-        if (ev.EventStatusId != 1)
+        if (!TryGetUserId(user, out Guid organizerId))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("This event is already published or has been canceled."));
+            return TypedResults.BadRequest(TypedResults.Problem("Invalid user claim data."));
         }
 
-        ev.EventStatusId = 2; // 2 = Published / Live
-        ev.UpdatedAt = DateTimeOffset.UtcNow;
-
-        await dbContext.SaveChangesAsync();
-        return TypedResults.Ok(MapToResponse(ev));
+        EventOperationResult<Event> result = await eventService.PublishAsync(id, organizerId);
+        return ToEventMutationHttpResult(result);
     }
 
     // BE11: POST /events/{id}/cancel - Move state to Canceled (3)
     private static async Task<Results<Ok<EventResponse>, BadRequest<ProblemHttpResult>, ForbidHttpResult, NotFound>> CancelAsync(
         Guid id,
         ClaimsPrincipal user,
-        AppDbContext dbContext)
+        IEventService eventService)
     {
-        var ev = await dbContext.Events.FirstOrDefaultAsync(e => e.EventId == id);
-        if (ev is null) return TypedResults.NotFound();
-
-        string? currentUserId = user.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (ev.OrganizerId.ToString() != currentUserId) return TypedResults.Forbid();
-
-        if (ev.EventStatusId == 3)
-        {
-            return TypedResults.BadRequest(TypedResults.Problem("This event has already been canceled."));
-        }
-
-        ev.EventStatusId = 3; // 3 = Canceled
-        ev.UpdatedAt = DateTimeOffset.UtcNow;
-
-        await dbContext.SaveChangesAsync();
-        return TypedResults.Ok(MapToResponse(ev));
-    }
-
-    // BE12: POST /events/{id}/register — validation here, confirmed/waitlist assignment in RegistrationOrchestrator
-    private static async Task<Results<Created<RegistrationResponse>, BadRequest<ProblemHttpResult>, NotFound, Conflict<ProblemHttpResult>>> RegisterAsync(
-        Guid id,
-        ClaimsPrincipal user,
-        AppDbContext dbContext,
-        IRegistrationOrchestrator registrationOrchestrator)
-    {
-        var ev = await dbContext.Events.AsNoTracking().FirstOrDefaultAsync(e => e.EventId == id);
-        if (ev is null)
-        {
-            return TypedResults.NotFound();
-        }
-
-        if (!Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out Guid studentId))
+        if (!TryGetUserId(user, out Guid organizerId))
         {
             return TypedResults.BadRequest(TypedResults.Problem("Invalid user claim data."));
         }
 
-        if (ev.EventStatusId != 2)
+        EventOperationResult<Event> result = await eventService.CancelAsync(id, organizerId);
+        return ToEventMutationHttpResult(result);
+    }
+
+    // BE12: POST /events/{id}/register - registration assignment remains in RegistrationOrchestrator
+    private static async Task<Results<Created<RegistrationResponse>, BadRequest<ProblemHttpResult>, NotFound, Conflict<ProblemHttpResult>>> RegisterAsync(
+        Guid id,
+        ClaimsPrincipal user,
+        IEventService eventService)
+    {
+        if (!TryGetUserId(user, out Guid studentId))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("Only published events accept registrations."));
+            return TypedResults.BadRequest(TypedResults.Problem("Invalid user claim data."));
         }
 
-        if (ev.EndsAt <= DateTimeOffset.UtcNow)
+        EventOperationResult<RegistrationResult> result = await eventService.RegisterAsync(id, studentId);
+
+        return result.Status switch
         {
-            return TypedResults.BadRequest(TypedResults.Problem("This event has already ended."));
-        }
+            EventOperationStatus.Success => TypedResults.Created(
+                $"/events/{id}/registrations/{result.Value!.RegistrationId}",
+                MapToResponse(result.Value)),
+            EventOperationStatus.BadRequest => TypedResults.BadRequest(TypedResults.Problem(result.Problem)),
+            EventOperationStatus.NotFound => TypedResults.NotFound(),
+            EventOperationStatus.Conflict => TypedResults.Conflict(TypedResults.Problem(result.Problem)),
+            _ => TypedResults.BadRequest(TypedResults.Problem("Unable to register for this event."))
+        };
+    }
 
-        bool alreadyRegistered = await dbContext.Database
-            .SqlQuery<bool>($"""
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM public.registrations
-                    WHERE event_id = {id}
-                      AND student_id = {studentId}
-                      AND cancelled_at IS NULL
-                ) AS "Value"
-                """)
-            .SingleAsync();
+    private static bool TryGetUserId(ClaimsPrincipal user, out Guid userId)
+    {
+        return Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out userId);
+    }
 
-        if (alreadyRegistered)
+    private static EventDetails ToDetails(CreateEventRequest request) =>
+        new(request.Title, request.Description, request.StartsAt, request.EndsAt, request.Capacity, request.LocationText);
+
+    private static EventDetails ToDetails(UpdateEventRequest request) =>
+        new(request.Title, request.Description, request.StartsAt, request.EndsAt, request.Capacity, request.LocationText);
+
+    private static Results<Ok<EventResponse>, BadRequest<ProblemHttpResult>, ForbidHttpResult, NotFound> ToEventMutationHttpResult(
+        EventOperationResult<Event> result)
+    {
+        return result.Status switch
         {
-            return TypedResults.Conflict(TypedResults.Problem("You are already registered for this event."));
-        }
-
-        try
-        {
-            (Guid registrationId, int statusId) = await registrationOrchestrator.RegisterStudentTransactionAsync(id, studentId);
-
-            var response = new RegistrationResponse(
-                registrationId,
-                id,
-                studentId,
-                statusId,
-                MapRegistrationStatus(statusId),
-                DateTimeOffset.UtcNow);
-
-            return TypedResults.Created($"/events/{id}/registrations/{registrationId}", response);
-        }
-        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
-        {
-            return TypedResults.Conflict(TypedResults.Problem("You are already registered for this event."));
-        }
+            EventOperationStatus.Success => TypedResults.Ok(MapToResponse(result.Value!)),
+            EventOperationStatus.BadRequest => TypedResults.BadRequest(TypedResults.Problem(result.Problem)),
+            EventOperationStatus.Forbidden => TypedResults.Forbid(),
+            EventOperationStatus.NotFound => TypedResults.NotFound(),
+            _ => TypedResults.BadRequest(TypedResults.Problem("Unable to update this event."))
+        };
     }
 
     private static string MapRegistrationStatus(int statusId) => statusId switch
@@ -313,6 +228,15 @@ public static class EventEndpoints
 
     private static EventResponse MapToResponse(Event e) =>
         new(e.EventId, e.OrganizerId, e.EventStatusId, e.Title, e.Description, e.StartsAt, e.EndsAt, e.Capacity, e.LocationText, e.CreatedAt);
+
+    private static RegistrationResponse MapToResponse(RegistrationResult registration) =>
+        new(
+            registration.RegistrationId,
+            registration.EventId,
+            registration.StudentId,
+            registration.RegistrationStatusId,
+            MapRegistrationStatus(registration.RegistrationStatusId),
+            registration.RegisteredAt);
 }
 
 public sealed record CreateEventRequest(string Title, string? Description, DateTimeOffset StartsAt, DateTimeOffset EndsAt, int Capacity, string? LocationText);

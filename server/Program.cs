@@ -38,6 +38,7 @@ builder.Services.AddSwaggerGen(options =>
 });
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IRegistrationOrchestrator, RegistrationOrchestrator>();
 builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddCors(options =>
