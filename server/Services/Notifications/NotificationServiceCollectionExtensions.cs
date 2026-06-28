@@ -40,6 +40,8 @@ public static class NotificationServiceCollectionExtensions
             .ValidateOnStart();
 
         services.AddSingleton<IEmailNotificationSender, LogEmailNotificationSender>();
+        services.AddScoped<INotificationJobReader, NotificationJobReader>();
+        services.AddScoped<INotificationJobProcessor, NotificationJobProcessor>();
 
         RabbitMqOptions rabbitMqOptions = configuration
             .GetSection(RabbitMqOptions.SectionName)

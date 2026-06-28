@@ -69,7 +69,8 @@ public sealed class RegistrationOrchestrator(AppDbContext dbContext) : IRegistra
                 VALUES ({0}, {1}, 1, CAST({2} AS jsonb), {3}, {4});
                 """;
 
-            string payloadJson = $$"""{"type":"RegistrationProcessed","event_id":"{{eventId}}","student_id":"{{studentId}}","assigned_status_id":{{statusId}}}""";
+            string payloadType = statusId == 1 ? "RegistrationConfirmed" : "RegistrationWaitlisted";
+            string payloadJson = $$"""{"type":"{{payloadType}}","event_id":"{{eventId}}","student_id":"{{studentId}}","registration_id":"{{registrationId}}","assigned_status_id":{{statusId}}}""";
             string jobTitle = statusId == 1 ? "Registration Confirmed!" : "Placed on Waitlist";
             string jobMessage = statusId == 1
                 ? "Great news! Your seat for the event has been confirmed."
