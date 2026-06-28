@@ -57,6 +57,13 @@ public sealed class RabbitMqConnection(
                 UserName = rabbitOptions.UserName,
                 Password = rabbitOptions.Password,
                 VirtualHost = rabbitOptions.VirtualHost,
+                Ssl = new SslOption
+                {
+                    Enabled = rabbitOptions.RequireTls,
+                    ServerName = string.IsNullOrWhiteSpace(rabbitOptions.TlsServerName)
+                        ? rabbitOptions.HostName
+                        : rabbitOptions.TlsServerName
+                },
                 DispatchConsumersAsync = true,
                 AutomaticRecoveryEnabled = true,
                 TopologyRecoveryEnabled = true,

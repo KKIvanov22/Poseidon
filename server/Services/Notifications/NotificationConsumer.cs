@@ -21,29 +21,47 @@ public sealed class NotificationConsumer(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         RabbitMqOptions rabbitOptions = options.Value;
-        using IModel channel = rabbitMqConnection.CreateChannel();
-        RabbitMqTopology.Declare(channel, rabbitOptions);
-        channel.BasicQos(prefetchSize: 0, prefetchCount: rabbitOptions.ConsumerPrefetchCount, global: false);
 
-        var consumer = new AsyncEventingBasicConsumer(channel);
-        consumer.Received += async (_, eventArgs) =>
+        while (!stoppingToken.IsCancellationRequested)
         {
-            await HandleDeliveryAsync(channel, eventArgs, rabbitOptions, stoppingToken);
-        };
+            try
+            {
+                using IModel channel = rabbitMqConnection.CreateChannel();
+                RabbitMqTopology.Declare(channel, rabbitOptions);
+                channel.BasicQos(prefetchSize: 0, prefetchCount: rabbitOptions.ConsumerPrefetchCount, global: false);
 
-        channel.BasicConsume(
-            queue: rabbitOptions.QueueName,
-            autoAck: false,
-            consumer: consumer);
+                var consumer = new AsyncEventingBasicConsumer(channel);
+                consumer.Received += async (_, eventArgs) =>
+                {
+                    await HandleDeliveryAsync(channel, eventArgs, rabbitOptions, stoppingToken);
+                };
 
-        logger.LogInformation("Notification consumer started on queue {QueueName}.", rabbitOptions.QueueName);
+                channel.BasicConsume(
+                    queue: rabbitOptions.QueueName,
+                    autoAck: false,
+                    consumer: consumer);
 
-        try
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+                logger.LogInformation("Notification consumer started on queue {QueueName}.", rabbitOptions.QueueName);
+                await WaitForChannelCloseAsync(channel, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "Notification consumer failed while connecting or consuming.");
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(Math.Max(1, rabbitOptions.PublisherPollIntervalSeconds)), stoppingToken);
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+    }
+
+    private static async Task WaitForChannelCloseAsync(IModel channel, CancellationToken cancellationToken)
+    {
+        while (channel.IsOpen)
         {
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
         }
     }
 
