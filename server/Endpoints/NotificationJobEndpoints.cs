@@ -20,6 +20,26 @@ public static class NotificationJobEndpoints
             .Produces(StatusCodes.Status401Unauthorized)
             .Produces(StatusCodes.Status403Forbidden);
 
+        group.MapPost("/{id:guid}/complete", MarkCompletedAsync)
+            .RequireRole(UserRoles.Admin)
+            .WithName("MarkNotificationJobCompleted")
+            .WithSummary("Mark a notification job completed")
+            .Produces<CompletedNotificationJobResponse>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status403Forbidden)
+            .Produces(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
+        group.MapPost("/{id:guid}/retry", RetryAsync)
+            .RequireRole(UserRoles.Admin)
+            .WithName("RetryNotificationJob")
+            .WithSummary("Retry a failed notification job")
+            .Produces<RetriedNotificationJobResponse>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status403Forbidden)
+            .Produces(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict);
+
         return group;
     }
 
@@ -35,6 +55,38 @@ public static class NotificationJobEndpoints
         return TypedResults.Ok(jobs.Select(MapToResponse).ToList());
     }
 
+    private static async Task<Results<Ok<CompletedNotificationJobResponse>, NotFound, Conflict<ProblemHttpResult>>> MarkCompletedAsync(
+        Guid id,
+        INotificationJobCompletionService completionService,
+        CancellationToken cancellationToken)
+    {
+        NotificationJobCompletionResult result = await completionService.MarkCompletedAsync(id, cancellationToken);
+
+        return result.Status switch
+        {
+            NotificationJobCompletionStatus.Completed => TypedResults.Ok(MapToCompletedResponse(result.Job!)),
+            NotificationJobCompletionStatus.NotFound => TypedResults.NotFound(),
+            NotificationJobCompletionStatus.CannotComplete => TypedResults.Conflict(TypedResults.Problem(result.Problem)),
+            _ => TypedResults.Conflict(TypedResults.Problem("Unable to complete this notification job."))
+        };
+    }
+
+    private static async Task<Results<Ok<RetriedNotificationJobResponse>, NotFound, Conflict<ProblemHttpResult>>> RetryAsync(
+        Guid id,
+        INotificationJobRetryService retryService,
+        CancellationToken cancellationToken)
+    {
+        NotificationJobRetryResult result = await retryService.RetryAsync(id, cancellationToken);
+
+        return result.Status switch
+        {
+            NotificationJobRetryStatus.Retried => TypedResults.Ok(MapToRetriedResponse(result.Job!)),
+            NotificationJobRetryStatus.NotFound => TypedResults.NotFound(),
+            NotificationJobRetryStatus.CannotRetry => TypedResults.Conflict(TypedResults.Problem(result.Problem)),
+            _ => TypedResults.Conflict(TypedResults.Problem("Unable to retry this notification job."))
+        };
+    }
+
     private static PendingNotificationJobResponse MapToResponse(PendingNotificationJob job) =>
         new(
             job.NotificationJobId,
@@ -47,6 +99,22 @@ public static class NotificationJobEndpoints
             job.Attempts,
             job.AvailableAt,
             job.CreatedAt);
+
+    private static CompletedNotificationJobResponse MapToCompletedResponse(Data.Entities.NotificationJob job) =>
+        new(
+            job.NotificationJobId,
+            job.JobStatusId,
+            "Succeeded",
+            job.Attempts,
+            job.ProcessedAt);
+
+    private static RetriedNotificationJobResponse MapToRetriedResponse(Data.Entities.NotificationJob job) =>
+        new(
+            job.NotificationJobId,
+            job.JobStatusId,
+            "Pending",
+            job.Attempts,
+            job.AvailableAt);
 }
 
 public sealed record PendingNotificationJobResponse(
@@ -60,3 +128,17 @@ public sealed record PendingNotificationJobResponse(
     int Attempts,
     DateTimeOffset AvailableAt,
     DateTimeOffset CreatedAt);
+
+public sealed record CompletedNotificationJobResponse(
+    Guid NotificationJobId,
+    int JobStatusId,
+    string JobStatus,
+    int Attempts,
+    DateTimeOffset? ProcessedAt);
+
+public sealed record RetriedNotificationJobResponse(
+    Guid NotificationJobId,
+    int JobStatusId,
+    string JobStatus,
+    int Attempts,
+    DateTimeOffset AvailableAt);

@@ -11,8 +11,10 @@ public sealed class NotificationJobProcessor(
     IEmailNotificationSender emailSender) : INotificationJobProcessor
 {
     private const int PendingStatusId = 1;
+    private const int ProcessingStatusId = 2;
     private const int SucceededStatusId = 3;
     private const int FailedStatusId = 4;
+    private const int ProcessingLeaseSeconds = 60;
     private const string RegistrationConfirmedType = "RegistrationConfirmed";
     private const string RegistrationWaitlistedType = "RegistrationWaitlisted";
     private const string WaitlistPromotedType = "WaitlistPromoted";
@@ -43,6 +45,26 @@ public sealed class NotificationJobProcessor(
         {
             return new NotificationJobProcessResult(NotificationJobProcessStatus.UnsupportedType);
         }
+
+        DateTimeOffset processingLeaseExpiresAt = DateTimeOffset.UtcNow.AddSeconds(ProcessingLeaseSeconds);
+        int claimedRows = await dbContext.NotificationJobs
+            .Where(notificationJob => notificationJob.NotificationJobId == notificationJobId &&
+                notificationJob.JobStatusId == PendingStatusId)
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(notificationJob => notificationJob.JobStatusId, ProcessingStatusId)
+                    .SetProperty(notificationJob => notificationJob.PublisherLockedUntil, processingLeaseExpiresAt)
+                    .SetProperty(notificationJob => notificationJob.LastError, (string?)null),
+                cancellationToken);
+
+        if (claimedRows == 0)
+        {
+            return new NotificationJobProcessResult(NotificationJobProcessStatus.NotPending);
+        }
+
+        job.JobStatusId = ProcessingStatusId;
+        job.PublisherLockedUntil = processingLeaseExpiresAt;
+        job.LastError = null;
 
         string? recipientEmail = job.RecipientUser?.Email;
         if (string.IsNullOrWhiteSpace(recipientEmail))
