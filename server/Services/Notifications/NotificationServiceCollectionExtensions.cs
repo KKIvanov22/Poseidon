@@ -42,6 +42,8 @@ public static class NotificationServiceCollectionExtensions
         services.AddSingleton<IEmailNotificationSender, LogEmailNotificationSender>();
         services.AddScoped<INotificationJobReader, NotificationJobReader>();
         services.AddScoped<INotificationJobProcessor, NotificationJobProcessor>();
+        services.AddScoped<INotificationJobCompletionService, NotificationJobCompletionService>();
+        services.AddScoped<INotificationJobRetryService, NotificationJobRetryService>();
 
         RabbitMqOptions rabbitMqOptions = configuration
             .GetSection(RabbitMqOptions.SectionName)

@@ -13,6 +13,7 @@ public sealed class NotificationConsumer(
     IOptions<RabbitMqOptions> options,
     ILogger<NotificationConsumer> logger) : BackgroundService
 {
+    private const int ConsumerLeaseSeconds = 60;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly string connectionString = configuration.GetConnectionString("Default")
         ?? throw new InvalidOperationException("ConnectionStrings:Default must be configured.");
@@ -83,7 +84,7 @@ public sealed class NotificationConsumer(
                 return;
             }
 
-            if (await IsAlreadySucceededAsync(message.NotificationJobId, cancellationToken))
+            if (!await TryBeginProcessingAsync(message.NotificationJobId, cancellationToken))
             {
                 channel.BasicAck(eventArgs.DeliveryTag, multiple: false);
                 return;
@@ -117,22 +118,29 @@ public sealed class NotificationConsumer(
         }
     }
 
-    private async Task<bool> IsAlreadySucceededAsync(Guid notificationJobId, CancellationToken cancellationToken)
+    private async Task<bool> TryBeginProcessingAsync(Guid notificationJobId, CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT EXISTS (
-                SELECT 1
-                FROM public.notification_jobs
-                WHERE notification_job_id = @notificationJobId
-                  AND job_status_id = 3
-            );
+            UPDATE public.notification_jobs
+            SET publisher_locked_until = CURRENT_TIMESTAMP + (@leaseSeconds * INTERVAL '1 second'),
+                last_error = NULL
+            WHERE notification_job_id = @notificationJobId
+              AND job_status_id = 2
+              AND published_at IS NOT NULL
+              AND processed_at IS NULL
+              AND (
+                  publisher_locked_until IS NULL
+                  OR publisher_locked_until <= CURRENT_TIMESTAMP
+              )
+            RETURNING 1;
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("notificationJobId", notificationJobId);
-        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+        command.Parameters.AddWithValue("leaseSeconds", ConsumerLeaseSeconds);
+        return await command.ExecuteScalarAsync(cancellationToken) is not null;
     }
 
     private async Task<EmailNotification> CreateEmailNotificationAsync(
@@ -167,25 +175,19 @@ public sealed class NotificationConsumer(
 
     private async Task MarkSucceededAsync(NotificationMessage message, CancellationToken cancellationToken)
     {
-        const string lockSql = """
-            SELECT job_status_id
-            FROM public.notification_jobs
-            WHERE notification_job_id = @notificationJobId
-            FOR UPDATE;
-            """;
-
-        const string updateSql = """
-            UPDATE public.notification_jobs
-            SET job_status_id = 3,
-                attempts = attempts + 1,
-                processed_at = CURRENT_TIMESTAMP,
-                publisher_locked_until = NULL,
-                last_error = NULL
-            WHERE notification_job_id = @notificationJobId
-              AND job_status_id <> 3;
-            """;
-
-        const string deliverySql = """
+        const string sql = """
+            WITH updated_job AS (
+                UPDATE public.notification_jobs
+                SET job_status_id = 3,
+                    attempts = attempts + 1,
+                    processed_at = CURRENT_TIMESTAMP,
+                    publisher_locked_until = NULL,
+                    last_error = NULL
+                WHERE notification_job_id = @notificationJobId
+                  AND job_status_id = 2
+                  AND processed_at IS NULL
+                RETURNING notification_job_id
+            )
             INSERT INTO public.notification_deliveries (
                 notification_job_id,
                 recipient_user_id,
@@ -193,44 +195,22 @@ public sealed class NotificationConsumer(
                 result
             )
             SELECT @notificationJobId, @recipientUserId, @channel, 'Succeeded'
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM public.notification_deliveries
-                WHERE notification_job_id = @notificationJobId
-                  AND result = 'Succeeded'
-            );
+            WHERE EXISTS (SELECT 1 FROM updated_job)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM public.notification_deliveries
+                  WHERE notification_job_id = @notificationJobId
+                    AND result = 'Succeeded'
+              );
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync(cancellationToken);
-
-        await using (var lockCommand = new NpgsqlCommand(lockSql, connection, transaction))
-        {
-            lockCommand.Parameters.AddWithValue("notificationJobId", message.NotificationJobId);
-            object? status = await lockCommand.ExecuteScalarAsync(cancellationToken);
-            if (status is null)
-            {
-                await transaction.RollbackAsync(cancellationToken);
-                return;
-            }
-        }
-
-        await using (var updateCommand = new NpgsqlCommand(updateSql, connection, transaction))
-        {
-            updateCommand.Parameters.AddWithValue("notificationJobId", message.NotificationJobId);
-            await updateCommand.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        await using (var deliveryCommand = new NpgsqlCommand(deliverySql, connection, transaction))
-        {
-            deliveryCommand.Parameters.AddWithValue("notificationJobId", message.NotificationJobId);
-            deliveryCommand.Parameters.AddWithValue("recipientUserId", message.RecipientUserId);
-            deliveryCommand.Parameters.AddWithValue("channel", message.Channel);
-            await deliveryCommand.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        await transaction.CommitAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("notificationJobId", message.NotificationJobId);
+        command.Parameters.AddWithValue("recipientUserId", message.RecipientUserId);
+        command.Parameters.AddWithValue("channel", message.Channel);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task MarkFailedOrRetryAsync(
@@ -246,6 +226,8 @@ public sealed class NotificationConsumer(
                 SELECT attempts
                 FROM public.notification_jobs
                 WHERE notification_job_id = @notificationJobId
+                  AND job_status_id = 2
+                  AND processed_at IS NULL
                 FOR UPDATE
             ),
             updated_job AS (
@@ -265,7 +247,6 @@ public sealed class NotificationConsumer(
                     last_error = left(@error, 2000)
                 WHERE job.notification_job_id = @notificationJobId
                   AND EXISTS (SELECT 1 FROM current_job)
-                  AND job.job_status_id <> 3
                 RETURNING job.notification_job_id
             )
             INSERT INTO public.notification_deliveries (
