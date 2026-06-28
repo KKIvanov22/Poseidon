@@ -4,6 +4,7 @@ using Microsoft.OpenApi;
 using Poseidon.Server.Data;
 using Poseidon.Server.Endpoints;
 using Poseidon.Server.Services;
+using Poseidon.Server.Services.Notifications;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -41,6 +42,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IRegistrationOrchestrator, RegistrationOrchestrator>();
+builder.Services.AddNotificationMessaging(builder.Configuration, builder.Environment);
 builder.Services.AddJwtAuthentication(builder.Configuration);
 
 // --- FluentEmail & Background Service Registration ---

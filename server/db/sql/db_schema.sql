@@ -135,6 +135,8 @@ CREATE TABLE notification_jobs (
 
     attempts INT NOT NULL DEFAULT 0,
     available_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    publisher_locked_until TIMESTAMPTZ,
+    published_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     processed_at TIMESTAMPTZ,
     last_error TEXT,
@@ -229,6 +231,10 @@ ON notification_jobs(recipient_user_id);
 CREATE INDEX ix_notification_jobs_status_available
 ON notification_jobs(job_status_id, available_at);
 
+CREATE INDEX ix_notification_jobs_publishable
+ON notification_jobs(job_status_id, available_at, publisher_locked_until)
+WHERE published_at IS NULL;
+
 CREATE INDEX ix_notification_jobs_payload
 ON notification_jobs USING GIN (payload);
 
@@ -240,3 +246,7 @@ ON notification_deliveries(recipient_user_id);
 
 CREATE INDEX ix_notification_deliveries_sent_at
 ON notification_deliveries(sent_at);
+
+CREATE UNIQUE INDEX ux_notification_deliveries_job_success
+ON notification_deliveries(notification_job_id)
+WHERE result = 'Succeeded';
