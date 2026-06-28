@@ -1,8 +1,12 @@
+using System.Security.Claims;
+using System.Threading.RateLimiting;
 using System.Net.Mail;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using Poseidon.Server.Data;
 using Poseidon.Server.Endpoints;
+using Poseidon.Server.RateLimiting;
 using Poseidon.Server.Services;
 using Poseidon.Server.Services.Notifications;
 
@@ -44,6 +48,39 @@ builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IRegistrationOrchestrator, RegistrationOrchestrator>();
 builder.Services.AddNotificationMessaging(builder.Configuration, builder.Environment);
 builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddRateLimiter(options =>
+{
+    ApiRateLimitOptions rateLimitOptions = builder.Configuration
+        .GetSection(ApiRateLimitOptions.SectionName)
+        .Get<ApiRateLimitOptions>() ?? new ApiRateLimitOptions();
+
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out TimeSpan retryAfter))
+        {
+            context.HttpContext.Response.Headers.RetryAfter = ((int)retryAfter.TotalSeconds).ToString();
+        }
+
+        await TypedResults.Problem(
+            title: "Too many requests.",
+            detail: "The endpoint rate limit has been exceeded. Please retry later.",
+            statusCode: StatusCodes.Status429TooManyRequests)
+            .ExecuteAsync(context.HttpContext);
+    };
+
+    options.AddPolicy(RateLimitPolicies.Api, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            GetRateLimitPartitionKey(httpContext),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = Math.Max(1, rateLimitOptions.PermitLimit),
+                Window = TimeSpan.FromSeconds(Math.Max(1, rateLimitOptions.WindowSeconds)),
+                QueueLimit = 0,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                AutoReplenishment = true
+            }));
+});
 
 // --- FluentEmail & Background Service Registration ---
 builder.Services
@@ -83,6 +120,7 @@ app.UseSwaggerUI(options =>
 
 app.UseCors(ClientCorsPolicy);
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapGet("/health/ping", () => Results.Ok(new
@@ -95,6 +133,7 @@ app.MapGet("/health/ping", () => Results.Ok(new
 .WithTags("Health")
 .WithSummary("Ping the API")
 .WithDescription("Checks that the API process is running and returns the current UTC check time.")
+.RequireRateLimiting(RateLimitPolicies.Api)
 .Produces(StatusCodes.Status200OK);
 
 app.MapAuthEndpoints();
@@ -104,3 +143,14 @@ app.MapWaitlistEndpoints(); // Maps the new waitlist retrieval route
 app.MapNotificationJobEndpoints();
 
 app.Run();
+
+static string GetRateLimitPartitionKey(HttpContext httpContext)
+{
+    string? userId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (!string.IsNullOrWhiteSpace(userId))
+    {
+        return $"user:{userId}";
+    }
+
+    return $"ip:{httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+}

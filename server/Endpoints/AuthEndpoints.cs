@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -10,6 +11,7 @@ using Npgsql;
 using Poseidon.Server.Auth;
 using Poseidon.Server.Data;
 using Poseidon.Server.Data.Entities;
+using Poseidon.Server.RateLimiting;
 
 namespace Poseidon.Server.Endpoints;
 
@@ -19,7 +21,9 @@ public static class AuthEndpoints
 
     public static RouteGroupBuilder MapAuthEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        RouteGroupBuilder group = endpoints.MapGroup("/auth").WithTags("Auth");
+        RouteGroupBuilder group = endpoints.MapGroup("/auth")
+            .WithTags("Auth")
+            .RequireRateLimiting(RateLimitPolicies.Api);
 
         group.MapPost("/register", RegisterAsync)
             .WithName("Register")

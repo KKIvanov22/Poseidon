@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.RateLimiting;
 using Poseidon.Server.Auth;
+using Poseidon.Server.RateLimiting;
 using Poseidon.Server.Services.Notifications;
 
 namespace Poseidon.Server.Endpoints;
@@ -10,6 +12,7 @@ public static class NotificationJobEndpoints
     {
         RouteGroupBuilder group = endpoints.MapGroup("/notifications/jobs")
             .WithTags("Notification Jobs")
+            .RequireRateLimiting(RateLimitPolicies.Api)
             .RequireAuthorization();
 
         group.MapGet("/pending", ReadPendingAsync)

@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Poseidon.Server.Data;
+using Poseidon.Server.RateLimiting;
 
 namespace Poseidon.Server.Endpoints;
 
@@ -10,6 +12,7 @@ public static class WaitlistEndpoints
     {
         var group = endpoints.MapGroup("/events/{id:guid}/waitlist")
             .WithTags("Waitlist")
+            .RequireRateLimiting(RateLimitPolicies.Api)
             .RequireAuthorization();
 
         group.MapGet("/", GetWaitlistAsync)

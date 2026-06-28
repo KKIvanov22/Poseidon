@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.RateLimiting;
 using Poseidon.Server.Auth;
 using Poseidon.Server.Data.Entities;
+using Poseidon.Server.RateLimiting;
 using Poseidon.Server.Services;
 
 namespace Poseidon.Server.Endpoints;
@@ -12,6 +14,7 @@ public static class EventEndpoints
     {
         RouteGroupBuilder group = endpoints.MapGroup("/events")
             .WithTags("Events")
+            .RequireRateLimiting(RateLimitPolicies.Api)
             .RequireAuthorization(); // Secures all routes under /events with JWT auth
 
         // BE06: POST /events
