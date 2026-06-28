@@ -20,6 +20,8 @@ services:
       RabbitMq__UserName: ${RABBITMQ_DEFAULT_USER:-poseidon}
       RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS:-poseidon_dev_password}
       RabbitMq__VirtualHost: /
+      Cors__AllowedOrigins__0: http://localhost:3000
+      Cors__AllowedOrigins__1: http://localhost:3001
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health/ping"]
       interval: 10s
