@@ -101,5 +101,6 @@ app.MapAuthEndpoints();
 app.MapUserEndpoints();
 app.MapEventEndpoints();
 app.MapWaitlistEndpoints(); // Maps the new waitlist retrieval route
+app.MapNotificationJobEndpoints();
 
 app.Run();

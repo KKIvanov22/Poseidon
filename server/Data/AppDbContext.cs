@@ -10,6 +10,8 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<Event> Events => Set<Event>(); 
     public DbSet<Registration> Registrations => Set<Registration>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<NotificationJob> NotificationJobs => Set<NotificationJob>();
+    public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -118,6 +120,77 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(n => n.FailureReason).HasColumnName("failure_reason").HasMaxLength(255);
             entity.Property(n => n.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(n => n.SentAt).HasColumnName("sent_at");
+        });
+
+        modelBuilder.Entity<NotificationJob>(entity =>
+        {
+            entity.ToTable("notification_jobs", "public");
+            entity.HasKey(job => job.NotificationJobId);
+
+            entity.Property(job => job.NotificationJobId)
+                .HasColumnName("notification_job_id")
+                .HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(job => job.EventId).HasColumnName("event_id");
+            entity.Property(job => job.RecipientUserId).HasColumnName("recipient_user_id");
+            entity.Property(job => job.JobStatusId).HasColumnName("job_status_id");
+            entity.Property(job => job.Payload).HasColumnName("payload").HasColumnType("jsonb").IsRequired();
+            entity.Property(job => job.Title).HasColumnName("title").HasMaxLength(150).IsRequired();
+            entity.Property(job => job.Message).HasColumnName("message").IsRequired();
+            entity.Property(job => job.Channel).HasColumnName("channel").HasMaxLength(30).HasDefaultValue("Email").IsRequired();
+            entity.Property(job => job.Attempts).HasColumnName("attempts").HasDefaultValue(0);
+            entity.Property(job => job.AvailableAt).HasColumnName("available_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(job => job.PublisherLockedUntil).HasColumnName("publisher_locked_until");
+            entity.Property(job => job.PublishedAt).HasColumnName("published_at");
+            entity.Property(job => job.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(job => job.ProcessedAt).HasColumnName("processed_at");
+            entity.Property(job => job.LastError).HasColumnName("last_error");
+
+            entity.HasIndex(job => new { job.EventId }).HasDatabaseName("ix_notification_jobs_event");
+            entity.HasIndex(job => new { job.RecipientUserId }).HasDatabaseName("ix_notification_jobs_recipient");
+            entity.HasIndex(job => new { job.JobStatusId, job.AvailableAt }).HasDatabaseName("ix_notification_jobs_status_available");
+
+            entity.HasOne(job => job.Event)
+                .WithMany()
+                .HasForeignKey(job => job.EventId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(job => job.RecipientUser)
+                .WithMany()
+                .HasForeignKey(job => job.RecipientUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<NotificationDelivery>(entity =>
+        {
+            entity.ToTable("notification_deliveries", "public");
+            entity.HasKey(delivery => delivery.NotificationDeliveryId);
+
+            entity.Property(delivery => delivery.NotificationDeliveryId)
+                .HasColumnName("notification_delivery_id")
+                .HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(delivery => delivery.NotificationJobId).HasColumnName("notification_job_id");
+            entity.Property(delivery => delivery.RecipientUserId).HasColumnName("recipient_user_id");
+            entity.Property(delivery => delivery.SentAt).HasColumnName("sent_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(delivery => delivery.Channel).HasColumnName("channel").HasMaxLength(30).IsRequired();
+            entity.Property(delivery => delivery.Result).HasColumnName("result").HasMaxLength(50).IsRequired();
+
+            entity.HasIndex(delivery => delivery.NotificationJobId).HasDatabaseName("ix_notification_deliveries_job");
+            entity.HasIndex(delivery => delivery.RecipientUserId).HasDatabaseName("ix_notification_deliveries_recipient");
+            entity.HasIndex(delivery => delivery.SentAt).HasDatabaseName("ix_notification_deliveries_sent_at");
+            entity.HasIndex(delivery => delivery.NotificationJobId)
+                .IsUnique()
+                .HasFilter("result = 'Succeeded'")
+                .HasDatabaseName("ux_notification_deliveries_job_success");
+
+            entity.HasOne(delivery => delivery.NotificationJob)
+                .WithMany()
+                .HasForeignKey(delivery => delivery.NotificationJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(delivery => delivery.RecipientUser)
+                .WithMany()
+                .HasForeignKey(delivery => delivery.RecipientUserId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }
