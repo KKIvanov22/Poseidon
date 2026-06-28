@@ -14,6 +14,8 @@ public sealed class NotificationJobProcessor(
     private const int SucceededStatusId = 3;
     private const int FailedStatusId = 4;
     private const string RegistrationConfirmedType = "RegistrationConfirmed";
+    private const string RegistrationWaitlistedType = "RegistrationWaitlisted";
+    private const string WaitlistPromotedType = "WaitlistPromoted";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<NotificationJobProcessResult> ProcessAsync(
@@ -37,7 +39,7 @@ public sealed class NotificationJobProcessor(
             return new NotificationJobProcessResult(NotificationJobProcessStatus.NotPending);
         }
 
-        if (!IsRegistrationConfirmedPayload(job))
+        if (!IsSupportedRegistrationPayload(job))
         {
             return new NotificationJobProcessResult(NotificationJobProcessStatus.UnsupportedType);
         }
@@ -73,16 +75,16 @@ public sealed class NotificationJobProcessor(
         }
     }
 
-    private static bool IsRegistrationConfirmedPayload(NotificationJob job)
+    private static bool IsSupportedRegistrationPayload(NotificationJob job)
     {
         try
         {
-            RegistrationConfirmedPayload? payload = JsonSerializer.Deserialize<RegistrationConfirmedPayload>(
+            RegistrationPayload? payload = JsonSerializer.Deserialize<RegistrationPayload>(
                 job.Payload,
                 JsonOptions);
 
             return payload is not null &&
-                string.Equals(payload.Type, RegistrationConfirmedType, StringComparison.Ordinal) &&
+                IsSupportedRegistrationType(payload.Type) &&
                 payload.EventId == job.EventId &&
                 payload.StudentId == job.RecipientUserId;
         }
@@ -91,6 +93,11 @@ public sealed class NotificationJobProcessor(
             return false;
         }
     }
+
+    private static bool IsSupportedRegistrationType(string type) =>
+        string.Equals(type, RegistrationConfirmedType, StringComparison.Ordinal) ||
+        string.Equals(type, RegistrationWaitlistedType, StringComparison.Ordinal) ||
+        string.Equals(type, WaitlistPromotedType, StringComparison.Ordinal);
 
     private async Task MarkSucceededAsync(NotificationJob job, CancellationToken cancellationToken)
     {
@@ -147,7 +154,7 @@ public sealed class NotificationJobProcessor(
         return new NotificationJobProcessResult(NotificationJobProcessStatus.Failed, error);
     }
 
-    private sealed record RegistrationConfirmedPayload(
+    private sealed record RegistrationPayload(
         [property: JsonPropertyName("type")] string Type,
         [property: JsonPropertyName("event_id")] Guid EventId,
         [property: JsonPropertyName("student_id")] Guid StudentId);
