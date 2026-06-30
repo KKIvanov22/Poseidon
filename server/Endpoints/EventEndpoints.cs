@@ -35,6 +35,24 @@ public static class EventEndpoints
             .Produces<List<EventResponse>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapGet("/sorted/start-date-asc", GetSortedByStartDateAscAsync)
+            .WithName("GetEventsSortedByStartDateAsc")
+            .WithSummary("Get all events sorted by start date (earliest first)")
+            .Produces<List<EventResponse>>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapGet("/sorted/start-date-desc", GetSortedByStartDateDescAsync)
+            .WithName("GetEventsSortedByStartDateDesc")
+            .WithSummary("Get all events sorted by start date (latest first)")
+            .Produces<List<EventResponse>>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
+
+        group.MapGet("/sorted/title", GetSortedByTitleAsync)
+            .WithName("GetEventsSortedByTitle")
+            .WithSummary("Get all events sorted by title (A–Z)")
+            .Produces<List<EventResponse>>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized);
+
         // BE08: GET /events/{id}
         group.MapGet("/{id:guid}", GetByIdAsync)
             .WithName("GetEventById")
@@ -115,6 +133,24 @@ public static class EventEndpoints
     private static async Task<Ok<List<EventResponse>>> GetAllAsync(IEventService eventService)
     {
         List<Event> events = await eventService.GetAllAsync();
+        return TypedResults.Ok(events.Select(MapToResponse).ToList());
+    }
+
+    private static async Task<Ok<List<EventResponse>>> GetSortedByStartDateAscAsync(IEventService eventService)
+    {
+        List<Event> events = await eventService.GetAllSortedAsync(EventListSort.StartDateAscending);
+        return TypedResults.Ok(events.Select(MapToResponse).ToList());
+    }
+
+    private static async Task<Ok<List<EventResponse>>> GetSortedByStartDateDescAsync(IEventService eventService)
+    {
+        List<Event> events = await eventService.GetAllSortedAsync(EventListSort.StartDateDescending);
+        return TypedResults.Ok(events.Select(MapToResponse).ToList());
+    }
+
+    private static async Task<Ok<List<EventResponse>>> GetSortedByTitleAsync(IEventService eventService)
+    {
+        List<Event> events = await eventService.GetAllSortedAsync(EventListSort.TitleAscending);
         return TypedResults.Ok(events.Select(MapToResponse).ToList());
     }
 
