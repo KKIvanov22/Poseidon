@@ -5,10 +5,18 @@ using Poseidon.Server.Data.Entities;
 
 namespace Poseidon.Server.Services;
 
+public enum EventListSort
+{
+    StartDateAscending,
+    StartDateDescending,
+    TitleAscending
+}
+
 public interface IEventService
 {
     Task<EventOperationResult<Event>> CreateAsync(Guid organizerId, EventDetails details);
     Task<List<Event>> GetAllAsync();
+    Task<List<Event>> GetAllSortedAsync(EventListSort sort);
     Task<Event?> GetByIdAsync(Guid id);
     Task<EventOperationResult<Event>> UpdateAsync(Guid id, Guid organizerId, EventDetails details);
     Task<EventOperationResult<Event>> PublishAsync(Guid id, Guid organizerId);
@@ -50,12 +58,22 @@ public sealed class EventService(
         return EventOperationResult<Event>.Success(newEvent);
     }
 
-    public Task<List<Event>> GetAllAsync()
+    public Task<List<Event>> GetAllAsync() =>
+        GetAllSortedAsync(EventListSort.StartDateDescending);
+
+    public Task<List<Event>> GetAllSortedAsync(EventListSort sort)
     {
-        return dbContext.Events
-            .AsNoTracking()
-            .OrderByDescending(e => e.StartsAt)
-            .ToListAsync();
+        IQueryable<Event> query = dbContext.Events.AsNoTracking();
+
+        query = sort switch
+        {
+            EventListSort.StartDateAscending => query.OrderBy(e => e.StartsAt),
+            EventListSort.StartDateDescending => query.OrderByDescending(e => e.StartsAt),
+            EventListSort.TitleAscending => query.OrderBy(e => e.Title),
+            _ => query.OrderByDescending(e => e.StartsAt)
+        };
+
+        return query.ToListAsync();
     }
 
     public Task<Event?> GetByIdAsync(Guid id)
