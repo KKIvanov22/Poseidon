@@ -40,6 +40,28 @@ public static class NotificationServiceCollectionExtensions
             .ValidateOnStart();
 
         services.AddSingleton<IEmailNotificationSender, SmtpEmailNotificationSender>();
+        services
+            .AddOptions<FirebaseCloudMessagingOptions>()
+            .Bind(configuration.GetSection(FirebaseCloudMessagingOptions.SectionName))
+            .Validate(options =>
+                !options.Enabled ||
+                !string.IsNullOrWhiteSpace(options.CredentialPath) ||
+                !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS")),
+                "Firebase:CloudMessaging requires CredentialPath or GOOGLE_APPLICATION_CREDENTIALS when enabled.")
+            .ValidateOnStart();
+
+        FirebaseCloudMessagingOptions firebaseOptions = configuration
+            .GetSection(FirebaseCloudMessagingOptions.SectionName)
+            .Get<FirebaseCloudMessagingOptions>() ?? new FirebaseCloudMessagingOptions();
+        if (firebaseOptions.Enabled)
+        {
+            services.AddSingleton<IPushNotificationSender, FirebasePushNotificationSender>();
+        }
+        else
+        {
+            services.AddSingleton<IPushNotificationSender, NoOpPushNotificationSender>();
+        }
+
         services.AddScoped<INotificationJobReader, NotificationJobReader>();
         services.AddScoped<INotificationJobProcessor, NotificationJobProcessor>();
         services.AddScoped<INotificationJobCompletionService, NotificationJobCompletionService>();

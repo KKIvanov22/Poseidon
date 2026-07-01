@@ -143,6 +143,7 @@ app.MapEventEndpoints();
 app.MapRegistrationEndpoints();
 app.MapWaitlistEndpoints(); // Maps the new waitlist retrieval route
 app.MapNotificationJobEndpoints();
+app.MapPushDeviceTokenEndpoints();
 
 app.Run();
 

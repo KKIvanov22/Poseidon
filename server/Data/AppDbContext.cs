@@ -10,10 +10,11 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<EventStatus> EventStatuses => Set<EventStatus>();
     public DbSet<RegistrationStatus> RegistrationStatuses => Set<RegistrationStatus>();
     public DbSet<NotificationJobStatus> NotificationJobStatuses => Set<NotificationJobStatus>();
-    public DbSet<Event> Events => Set<Event>(); 
+    public DbSet<Event> Events => Set<Event>();
     public DbSet<Registration> Registrations => Set<Registration>();
     public DbSet<NotificationJob> NotificationJobs => Set<NotificationJob>();
     public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
+    public DbSet<PushDeviceToken> PushDeviceTokens => Set<PushDeviceToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -27,7 +28,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(user => user.UserId)
                 .HasColumnName("user_id")
                 .HasDefaultValueSql("gen_random_uuid()");
-                
+
             entity.Property(user => user.Email).HasColumnName("email").HasMaxLength(255).IsRequired();
             entity.Property(user => user.PasswordHash).HasColumnName("password_hash").HasMaxLength(255).IsRequired();
             entity.Property(user => user.DisplayName).HasColumnName("display_name").HasMaxLength(100).IsRequired();
@@ -124,7 +125,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
             entity.Property(e => e.EventId).HasColumnName("event_id").HasDefaultValueSql("gen_random_uuid()");
             entity.Property(e => e.OrganizerId).HasColumnName("organizer_id");
-            entity.Property(e => e.EventStatusId).HasColumnName("event_status_id").HasDefaultValue(1); 
+            entity.Property(e => e.EventStatusId).HasColumnName("event_status_id").HasDefaultValue(1);
             entity.Property(e => e.Title).HasColumnName("title").HasMaxLength(150).IsRequired();
             entity.Property(e => e.Description).HasColumnName("description");
             entity.Property(e => e.StartsAt).HasColumnName("starts_at").IsRequired();
@@ -280,6 +281,38 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .WithMany()
                 .HasForeignKey(delivery => delivery.RecipientUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<PushDeviceToken>(entity =>
+        {
+            entity.ToTable("push_device_tokens", "public", table =>
+            {
+                table.HasCheckConstraint("ck_push_device_tokens_platform", "platform IN ('Android')");
+            });
+
+            entity.HasKey(token => token.PushDeviceTokenId);
+            entity.Property(token => token.PushDeviceTokenId)
+                .HasColumnName("push_device_token_id")
+                .HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(token => token.UserId).HasColumnName("user_id");
+            entity.Property(token => token.Token).HasColumnName("token").HasMaxLength(512).IsRequired();
+            entity.Property(token => token.Platform).HasColumnName("platform").HasMaxLength(30).HasDefaultValue("Android").IsRequired();
+            entity.Property(token => token.DeviceId).HasColumnName("device_id").HasMaxLength(100);
+            entity.Property(token => token.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(token => token.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(token => token.LastSeenAt).HasColumnName("last_seen_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(token => token.RevokedAt).HasColumnName("revoked_at");
+
+            entity.HasIndex(token => token.Token)
+                .IsUnique()
+                .HasDatabaseName("ux_push_device_tokens_token");
+            entity.HasIndex(token => new { token.UserId, token.RevokedAt })
+                .HasDatabaseName("ix_push_device_tokens_user_active");
+
+            entity.HasOne(token => token.User)
+                .WithMany()
+                .HasForeignKey(token => token.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

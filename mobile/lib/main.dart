@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'auth/auth_notifier.dart';
+import 'core/push_notification_service.dart';
 import 'router/app_router.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(PoseidonApp(auth: AuthNotifier()));
+  final auth = AuthNotifier();
+  PushNotificationService().initialize(auth);
+  runApp(PoseidonApp(auth: auth));
 }
 
 class PoseidonApp extends StatelessWidget {

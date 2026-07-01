@@ -30,6 +30,9 @@ services:
       Cors__AllowedOrigins__0: ${CORS_ORIGIN_0:-http://localhost:3000}
       Cors__AllowedOrigins__1: ${CORS_ORIGIN_1:-http://localhost:3001}
       Cors__AllowedOrigins__2: ${CORS_ORIGIN_2:-}
+      Firebase__CloudMessaging__Enabled: ${FIREBASE_CLOUD_MESSAGING_ENABLED:-false}
+      Firebase__CloudMessaging__ProjectId: ${FIREBASE_CLOUD_MESSAGING_PROJECT_ID:-}
+      Firebase__CloudMessaging__CredentialPath: ${FIREBASE_CLOUD_MESSAGING_CREDENTIAL_PATH:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health/ping"]
       interval: 10s

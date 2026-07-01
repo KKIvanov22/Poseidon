@@ -27,6 +27,11 @@ dependencies:
   # Google Fonts (Inter)
   google_fonts: ^6.2.1
 
+  # Android push notifications
+  firebase_core: ^3.8.0
+  firebase_messaging: ^15.1.6
+  flutter_local_notifications: ^18.0.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

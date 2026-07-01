@@ -176,6 +176,33 @@ Future<Map<String, dynamic>> apiUpdateUserRole(
 }
 
 // ---------------------------------------------------------------------------
+// Push Tokens
+// ---------------------------------------------------------------------------
+
+Future<void> apiRegisterPushToken(
+  String token,
+  String pushToken, {
+  String platform = 'Android',
+  String? deviceId,
+}) async {
+  await ApiClient.request(
+    '/push-tokens',
+    method: 'POST',
+    token: token,
+    body: {'token': pushToken, 'platform': platform, 'deviceId': deviceId},
+  );
+}
+
+Future<void> apiRevokePushToken(String token, String pushToken) async {
+  await ApiClient.request(
+    '/push-tokens',
+    method: 'DELETE',
+    token: token,
+    body: {'token': pushToken},
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Notification Jobs
 // ---------------------------------------------------------------------------
 

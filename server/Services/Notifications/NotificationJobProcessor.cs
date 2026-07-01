@@ -84,6 +84,7 @@ public sealed class NotificationJobProcessor(
             await emailSender.SendAsync(
                 new EmailNotification(
                     job.NotificationJobId,
+                    job.EventId,
                     job.RecipientUserId,
                     recipientEmail,
                     job.Title,
