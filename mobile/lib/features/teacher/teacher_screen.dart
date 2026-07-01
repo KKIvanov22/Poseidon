@@ -141,6 +141,15 @@ class _TeacherScreenState extends State<TeacherScreen> {
                             icon: const Icon(Icons.publish_rounded),
                             label: const Text('Publish'),
                           ),
+                        if (event.isPublished)
+                          OutlinedButton.icon(
+                            onPressed: () => _mutate(
+                              (token) async =>
+                                  apiCloseEvent(token, event.eventId),
+                            ),
+                            icon: const Icon(Icons.lock_rounded),
+                            label: const Text('Close'),
+                          ),
                       ],
                     ),
                   ),
@@ -196,6 +205,15 @@ class _TeacherScreenState extends State<TeacherScreen> {
                   _mutate(
                     (token) async => apiCancelEvent(token, event.eventId),
                   );
+                },
+              ),
+            if (event.isPublished)
+              ListTile(
+                leading: const Icon(Icons.lock_rounded),
+                title: const Text('Close registration'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _mutate((token) async => apiCloseEvent(token, event.eventId));
                 },
               ),
           ],

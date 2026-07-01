@@ -95,6 +95,15 @@ Future<Map<String, dynamic>> apiCancelEvent(
   return data as Map<String, dynamic>;
 }
 
+Future<Map<String, dynamic>> apiCloseEvent(String token, String eventId) async {
+  final data = await ApiClient.request(
+    '/events/$eventId/close',
+    method: 'POST',
+    token: token,
+  );
+  return data as Map<String, dynamic>;
+}
+
 Future<Map<String, dynamic>> apiRegisterForEvent(
   String token,
   String eventId,

@@ -208,6 +208,14 @@ class _AdminScreenState extends State<AdminScreen> {
                       icon: const Icon(Icons.cancel_rounded),
                       label: const Text('Cancel'),
                     ),
+                  if (event.isPublished)
+                    OutlinedButton.icon(
+                      onPressed: () => _run(
+                        (token) async => apiCloseEvent(token, event.eventId),
+                      ),
+                      icon: const Icon(Icons.lock_rounded),
+                      label: const Text('Close'),
+                    ),
                 ],
               ),
             ),

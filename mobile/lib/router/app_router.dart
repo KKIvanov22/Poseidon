@@ -21,7 +21,9 @@ GoRouter createAppRouter(AuthNotifier auth) {
 
       if (authState.status == AuthStatus.booting) return null;
       if (!authState.isAuthenticated) return publicRoute ? null : '/login';
-      if (publicRoute) return _homeForRole(authState.role);
+      final home = _homeForRole(authState.role);
+      if (publicRoute) return home;
+      if (!_roleCanOpen(authState.role, state.matchedLocation)) return home;
       return null;
     },
     routes: [
@@ -62,3 +64,10 @@ String _homeForRole(String role) => switch (role) {
   'teacher' => '/teacher',
   _ => '/student',
 };
+
+bool _roleCanOpen(String role, String location) {
+  if (location.startsWith('/admin')) return role == 'admin';
+  if (location.startsWith('/teacher')) return role == 'teacher';
+  if (location.startsWith('/student')) return role == 'student';
+  return true;
+}
