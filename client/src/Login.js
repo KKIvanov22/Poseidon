@@ -1,8 +1,14 @@
 import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { FiArrowRight, FiLock, FiLogIn, FiMail } from 'react-icons/fi';
 import { login, ApiError } from './api';
+import { useAuth } from './auth/AuthContext';
+import { getDashboardPath } from './lib/roles';
 
-const Login = ({ onSwitchToSignUp, onLoginSuccess }) => {
+export default function Login() {
+  const navigate = useNavigate();
+  const { login: saveSession } = useAuth();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -14,7 +20,8 @@ const Login = ({ onSwitchToSignUp, onLoginSuccess }) => {
     setSubmitting(true);
     try {
       const auth = await login(email, password);
-      onLoginSuccess(auth);
+      const session = saveSession(auth);
+      navigate(getDashboardPath(session.user.role), { replace: true });
     } catch (err) {
       setError(
         err instanceof ApiError && err.status === 401
@@ -34,13 +41,12 @@ const Login = ({ onSwitchToSignUp, onLoginSuccess }) => {
             <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-500 font-display text-lg font-bold text-white">P</span>
             <span className="font-display text-xl font-bold text-ink">Poseidon</span>
           </div>
-          <button
-            type="button"
-            onClick={onSwitchToSignUp}
+          <Link
+            to="/signup"
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:border-brand-400 hover:text-brand-500"
           >
             Sign up
-          </button>
+          </Link>
         </div>
       </header>
 
@@ -77,7 +83,7 @@ const Login = ({ onSwitchToSignUp, onLoginSuccess }) => {
             </div>
           </div>
 
-          <form className="space-y-5" onSubmit={handleSubmit}>
+          <form className="space-y-5" onSubmit={handleSubmit} noValidate>
             <div>
               <label htmlFor="email" className="mb-2 flex items-center gap-2 text-sm font-bold text-ink">
                 <FiMail className="text-brand-500" /> Email
@@ -85,6 +91,7 @@ const Login = ({ onSwitchToSignUp, onLoginSuccess }) => {
               <input
                 id="email"
                 type="email"
+                autoComplete="email"
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -100,6 +107,7 @@ const Login = ({ onSwitchToSignUp, onLoginSuccess }) => {
               <input
                 id="password"
                 type="password"
+                autoComplete="current-password"
                 placeholder="Enter your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -109,7 +117,7 @@ const Login = ({ onSwitchToSignUp, onLoginSuccess }) => {
             </div>
 
             {error && (
-              <p className="rounded-lg border border-accent-100 bg-accent-50 px-3 py-2 text-sm font-semibold text-accent-600">
+              <p role="alert" className="rounded-lg border border-accent-100 bg-accent-50 px-3 py-2 text-sm font-semibold text-accent-600">
                 {error}
               </p>
             )}
@@ -125,15 +133,13 @@ const Login = ({ onSwitchToSignUp, onLoginSuccess }) => {
           </form>
 
           <p className="mt-6 text-center text-sm text-slate-500">
-            Don't have an account?{' '}
-            <button type="button" className="font-bold text-brand-600 transition hover:text-brand-700" onClick={onSwitchToSignUp}>
+            Don&apos;t have an account?{' '}
+            <Link to="/signup" className="font-bold text-brand-600 transition hover:text-brand-700">
               Sign up
-            </button>
+            </Link>
           </p>
         </section>
       </main>
     </div>
   );
 }
- 
-export default Login;

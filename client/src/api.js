@@ -6,6 +6,7 @@ class ApiError extends Error {
   constructor(message, status) {
     super(message);
     this.status = status;
+    this.name = 'ApiError';
   }
 }
 
@@ -20,11 +21,8 @@ async function request(path, { method = 'GET', token, body } = {}) {
       headers,
       body: body ? JSON.stringify(body) : undefined,
     });
-  } catch (networkError) {
-    throw new ApiError(
-      'Could not reach the Poseidon API. Is the server running?',
-      0
-    );
+  } catch {
+    throw new ApiError('Could not reach the Poseidon API. Is the server running?', 0);
   }
 
   if (!response.ok) {
@@ -44,19 +42,40 @@ async function request(path, { method = 'GET', token, body } = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+// Auth
 export const login = (email, password) =>
   request('/auth/login', { method: 'POST', body: { email, password } });
 
 export const register = (email, password, displayName) =>
-  request('/auth/register', {
-    method: 'POST',
-    body: { email, password, displayName },
-  });
+  request('/auth/register', { method: 'POST', body: { email, password, displayName } });
 
 export const logout = (token) =>
   request('/auth/logout', { method: 'POST', token });
 
+// Events
 export const getEvents = (token) => request('/events', { token });
+
 export const getMyEvents = (token) => request('/events/mine', { token });
+
+export const registerForEvent = (token, eventId) =>
+  request(`/events/${eventId}/register`, { method: 'POST', token });
+
+// Users
+export const getCurrentUser = (token) => request('/users/me', { token });
+
+export const listUsers = (token) => request('/users', { token });
+
+export const updateUserRole = (token, userId, role) =>
+  request(`/users/${userId}/role`, { method: 'PUT', token, body: { role } });
+
+// Admin notification jobs
+export const getPendingNotificationJobs = (token, limit = 25) =>
+  request(`/notifications/jobs/pending?limit=${limit}`, { token });
+
+export const completeNotificationJob = (token, jobId) =>
+  request(`/notifications/jobs/${jobId}/complete`, { method: 'POST', token });
+
+export const retryNotificationJob = (token, jobId) =>
+  request(`/notifications/jobs/${jobId}/retry`, { method: 'POST', token });
 
 export { ApiError };
