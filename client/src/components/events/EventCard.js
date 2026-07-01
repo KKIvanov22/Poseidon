@@ -1,4 +1,5 @@
 import { FiCalendar, FiMapPin, FiUsers } from 'react-icons/fi';
+import { useTheme } from '../../theme/ThemeContext';
 import {
   STATUS_META,
   FALLBACK_STATUS,
@@ -29,10 +30,11 @@ function TimeBadge({ tone, label }) {
 export default function EventCard({ event, now, index, footer }) {
   const status = STATUS_META[event.eventStatusId] || FALLBACK_STATUS;
   const time = getTimeContext(event.startsAt, event.endsAt, event.eventStatusId, now);
+  const { isDark } = useTheme();
 
   return (
     <div
-      className="group flex flex-col gap-4 rounded-2xl border border-slate-100 bg-white p-6 shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover animate-fade-up"
+      className={`group flex flex-col gap-4 rounded-2xl border p-6 shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover animate-fade-up ${isDark ? 'border-slate-800 bg-slate-900' : 'border-slate-100 bg-white'}`}
       style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
     >
       <div className="flex items-start justify-between gap-3">
@@ -44,13 +46,13 @@ export default function EventCard({ event, now, index, footer }) {
       </div>
 
       <div>
-        <h3 className="font-display text-lg font-bold leading-snug text-ink line-clamp-2">{event.title}</h3>
-        <p className="mt-1 line-clamp-2 text-sm text-slate-500">
-          {event.description || <span className="italic text-slate-400">No description provided.</span>}
+        <h3 className={`font-display text-lg font-bold leading-snug line-clamp-2 ${isDark ? 'text-slate-100' : 'text-ink'}`}>{event.title}</h3>
+        <p className={`mt-1 line-clamp-2 text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+          {event.description || <span className={`italic ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>No description provided.</span>}
         </p>
       </div>
 
-      <div className="space-y-2 border-t border-slate-100 pt-4 text-sm text-slate-600">
+      <div className={`space-y-2 border-t pt-4 text-sm ${isDark ? 'border-slate-800 text-slate-300' : 'border-slate-100 text-slate-600'}`}>
         <div className="flex items-center gap-2">
           <FiCalendar className="shrink-0 text-brand-500" />
           <span>{formatDateRange(event.startsAt, event.endsAt)}</span>

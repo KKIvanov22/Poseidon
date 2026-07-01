@@ -42,6 +42,15 @@ public static class UserEndpoints
             .Produces(StatusCodes.Status401Unauthorized)
             .Produces(StatusCodes.Status404NotFound);
 
+        group.MapPatch("/me/password", ChangePasswordAsync)
+            .WithName("ChangePassword")
+            .WithSummary("Change the authenticated user's password")
+            .Accepts<ChangePasswordRequest>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status404NotFound);
+
         group.MapPatch("/{userId:guid}/role", ChangeRoleAsync)
             .RequireRole(UserRoles.Admin)
             .WithName("ChangeUserRole")
@@ -123,6 +132,44 @@ public static class UserEndpoints
         return Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out userId);
     }
 
+    private static async Task<Results<NoContent, BadRequest<ProblemHttpResult>, NotFound>> ChangePasswordAsync(
+        ClaimsPrincipal principal,
+        ChangePasswordRequest request,
+        AppDbContext dbContext)
+    {
+        if (!TryGetUserId(principal, out Guid userId))
+        {
+            return TypedResults.NotFound();
+        }
+
+        if (string.IsNullOrWhiteSpace(request.CurrentPassword) ||
+            string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            return TypedResults.BadRequest(TypedResults.Problem("Current password and new password are required."));
+        }
+
+        if (request.NewPassword.Length < 8)
+        {
+            return TypedResults.BadRequest(TypedResults.Problem("New password must be at least 8 characters long."));
+        }
+
+        User? user = await dbContext.Users.SingleOrDefaultAsync(user => user.UserId == userId);
+        if (user is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
+        {
+            return TypedResults.BadRequest(TypedResults.Problem("Current password is incorrect."));
+        }
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+        await dbContext.SaveChangesAsync();
+
+        return TypedResults.NoContent();
+    }
+
     private static async Task<Results<Ok<UserResponse>, BadRequest<ProblemHttpResult>, NotFound>> ChangeRoleAsync(
         Guid userId,
         ChangeUserRoleRequest request,
@@ -192,5 +239,7 @@ public sealed record UserResponse(
     string DisplayName,
     string Role,
     DateTimeOffset CreatedAt);
+
+public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 
 public sealed record ChangeUserRoleRequest(string Role);

@@ -13,6 +13,23 @@
 body {
   font-family: "Quicksand", sans-serif;
   color: #333;
+  background-color: #f5f7fb;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'], body[data-theme='dark'] {
+  color-scheme: dark;
+  background-color: #020617;
+  color: #f8fafc;
+}
+
+body.theme-dark {
+  background-color: #020617;
+  color: #f8fafc;
 }
 
 .content {
