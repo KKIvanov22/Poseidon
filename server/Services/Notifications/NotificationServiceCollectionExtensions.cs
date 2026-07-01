@@ -55,6 +55,10 @@ public static class NotificationServiceCollectionExtensions
             services.AddHostedService<NotificationOutboxPublisher>();
             services.AddHostedService<NotificationConsumer>();
         }
+        else
+        {
+            services.AddHostedService<NotificationDatabaseWorker>();
+        }
 
         return services;
     }

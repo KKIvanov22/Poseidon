@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Poseidon.Server.Data;
 using Poseidon.Server.Data.Entities;
 using Poseidon.Server.Services.Notifications;
+using Xunit;
 
 namespace Poseidon.Server.Tests.Unit;
 
@@ -188,6 +189,11 @@ public sealed class NotificationJobProcessorTests
                 .Options;
             var dbContext = new AppDbContext(options);
             await dbContext.Database.EnsureCreatedAsync();
+            dbContext.UserRoles.AddRange(
+                new UserRole { RoleId = 1, RoleName = "Student" },
+                new UserRole { RoleId = 2, RoleName = "Teacher" },
+                new UserRole { RoleId = 3, RoleName = "Admin" });
+            await dbContext.SaveChangesAsync();
 
             return new SqliteTestDatabase(connection, dbContext);
         }

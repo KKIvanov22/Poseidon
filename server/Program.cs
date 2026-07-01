@@ -143,8 +143,6 @@ app.MapNotificationJobEndpoints();
 
 app.Run();
 
-public partial class Program;
-
 static string GetRateLimitPartitionKey(HttpContext httpContext)
 {
     string? userId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -155,3 +153,5 @@ static string GetRateLimitPartitionKey(HttpContext httpContext)
 
     return $"ip:{httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
 }
+
+public partial class Program;

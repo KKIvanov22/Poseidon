@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Poseidon.Server.Data;
 using Poseidon.Server.Data.Entities;
 using Poseidon.Server.Services;
+using Xunit;
 
 namespace Poseidon.Server.Tests.Unit;
 
@@ -77,6 +78,64 @@ public sealed class EventServiceTests
         Assert.Equal(EventOperationStatus.Success, result.Status);
         Assert.Equal(2, result.Value!.EventStatusId);
         Assert.NotNull(result.Value.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task CancelAsync_CancelsActiveRegistrationsAndEnqueuesNotifications()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        Guid organizerId = Guid.NewGuid();
+        Guid confirmedStudentId = Guid.NewGuid();
+        Guid waitlistedStudentId = Guid.NewGuid();
+        Guid cancelledStudentId = Guid.NewGuid();
+        Event existing = AddEvent(dbContext, organizerId, "Published", statusId: 2);
+        dbContext.Registrations.AddRange(
+            new Registration
+            {
+                RegistrationId = Guid.NewGuid(),
+                EventId = existing.EventId,
+                StudentId = confirmedStudentId,
+                RegistrationStatusId = 1,
+                RegisteredAt = DateTimeOffset.UtcNow.AddMinutes(-3)
+            },
+            new Registration
+            {
+                RegistrationId = Guid.NewGuid(),
+                EventId = existing.EventId,
+                StudentId = waitlistedStudentId,
+                RegistrationStatusId = 2,
+                RegisteredAt = DateTimeOffset.UtcNow.AddMinutes(-2)
+            },
+            new Registration
+            {
+                RegistrationId = Guid.NewGuid(),
+                EventId = existing.EventId,
+                StudentId = cancelledStudentId,
+                RegistrationStatusId = 3,
+                RegisteredAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                CancelledAt = DateTimeOffset.UtcNow
+            });
+        await dbContext.SaveChangesAsync();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        EventOperationResult<Event> result = await service.CancelAsync(existing.EventId, organizerId);
+
+        List<Registration> registrations = await dbContext.Registrations.ToListAsync();
+        Assert.Equal(EventOperationStatus.Success, result.Status);
+        Assert.Equal(3, result.Value!.EventStatusId);
+        Assert.All(
+            registrations.Where(registration => registration.StudentId != cancelledStudentId),
+            registration =>
+            {
+                Assert.Equal(3, registration.RegistrationStatusId);
+                Assert.NotNull(registration.CancelledAt);
+            });
+        Assert.Equal(2, await dbContext.NotificationJobs.CountAsync());
+        Assert.All(await dbContext.NotificationJobs.ToListAsync(), job =>
+        {
+            Assert.Equal(1, job.JobStatusId);
+            Assert.Contains("EventCancelled", job.Payload);
+        });
     }
 
     [Fact]

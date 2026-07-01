@@ -2,11 +2,14 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Poseidon.Server.Data;
 using Poseidon.Server.Endpoints;
+using Xunit;
 
 namespace Poseidon.Server.Tests.Integration;
 
@@ -22,7 +25,10 @@ public sealed class AuthEndpointsTests
             "/auth/register",
             new RegisterRequest("  NEW.STUDENT@EXAMPLE.COM  ", "Password123!", "  New Student  "));
 
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        string responseText = await response.Content.ReadAsStringAsync();
+        Assert.True(
+            response.StatusCode == HttpStatusCode.Created,
+            $"Expected Created but got {response.StatusCode}: {responseText}");
         AuthResponse? body = await response.Content.ReadFromJsonAsync<AuthResponse>();
         Assert.NotNull(body);
         Assert.Equal("new.student@example.com", body.Email);
@@ -47,14 +53,24 @@ public sealed class AuthEndpointsTests
                 });
             });
 
-            builder.ConfigureServices(services =>
+            builder.ConfigureTestServices(services =>
             {
-                ServiceDescriptor? descriptor = services.SingleOrDefault(
-                    service => service.ServiceType == typeof(DbContextOptions<AppDbContext>));
-                if (descriptor is not null)
+                for (int i = services.Count - 1; i >= 0; i--)
                 {
-                    services.Remove(descriptor);
+                    ServiceDescriptor descriptor = services[i];
+                    string serviceType = descriptor.ServiceType.FullName ?? string.Empty;
+                    string implementationType = descriptor.ImplementationType?.FullName ?? string.Empty;
+                    if (serviceType.Contains("EntityFrameworkCore", StringComparison.Ordinal) ||
+                        serviceType.Contains("Npgsql", StringComparison.Ordinal) ||
+                        implementationType.Contains("EntityFrameworkCore", StringComparison.Ordinal) ||
+                        implementationType.Contains("Npgsql", StringComparison.Ordinal))
+                    {
+                        services.RemoveAt(i);
+                    }
                 }
+
+                services.RemoveAll<DbContextOptions<AppDbContext>>();
+                services.RemoveAll<DbContextOptions>();
 
                 services.AddDbContext<AppDbContext>(options =>
                     options.UseInMemoryDatabase($"poseidon-integration-{Guid.NewGuid()}"));
