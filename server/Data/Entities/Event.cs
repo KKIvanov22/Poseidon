@@ -17,4 +17,5 @@ public sealed class Event
     public DateTimeOffset? UpdatedAt { get; set; }
 
     public User? Organizer { get; set; }
+    public EventStatus? EventStatus { get; set; }
 }

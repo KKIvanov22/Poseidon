@@ -22,6 +22,7 @@ public interface IEventService
     Task<EventOperationResult<Event>> UpdateAsync(Guid id, Guid organizerId, EventDetails details);
     Task<EventOperationResult<Event>> PublishAsync(Guid id, Guid organizerId, bool isAdmin = false);
     Task<EventOperationResult<Event>> CancelAsync(Guid id, Guid organizerId);
+    Task<EventOperationResult<Event>> CloseAsync(Guid id, Guid organizerId, bool isAdmin = false);
     Task<EventOperationResult<RegistrationResult>> RegisterAsync(Guid eventId, Guid studentId);
 }
 
@@ -32,6 +33,7 @@ public sealed class EventService(
     private const int DraftStatusId = 1;
     private const int PublishedStatusId = 2;
     private const int CancelledStatusId = 3;
+    private const int CompletedStatusId = 4;
     private const int ConfirmedRegistrationStatusId = 1;
     private const int WaitlistedRegistrationStatusId = 2;
     private const int CancelledRegistrationStatusId = 3;
@@ -202,6 +204,64 @@ public sealed class EventService(
                 Payload = payloadJson,
                 Title = "Event Cancelled",
                 Message = $"The event \"{ev.Title}\" has been cancelled.",
+                Channel = "Email"
+            });
+        }
+
+        await dbContext.SaveChangesAsync();
+        return EventOperationResult<Event>.Success(ev);
+    }
+
+    public async Task<EventOperationResult<Event>> CloseAsync(Guid id, Guid organizerId, bool isAdmin = false)
+    {
+        Event? ev = await dbContext.Events.FirstOrDefaultAsync(e => e.EventId == id);
+        if (ev is null)
+        {
+            return EventOperationResult<Event>.NotFound();
+        }
+
+        if (!isAdmin && ev.OrganizerId != organizerId)
+        {
+            return EventOperationResult<Event>.Forbidden();
+        }
+
+        if (ev.EventStatusId == CompletedStatusId)
+        {
+            return EventOperationResult<Event>.BadRequest("This event has already been completed.");
+        }
+
+        if (ev.EventStatusId == CancelledStatusId)
+        {
+            return EventOperationResult<Event>.BadRequest("Canceled events cannot be completed.");
+        }
+
+        if (ev.EventStatusId != PublishedStatusId)
+        {
+            return EventOperationResult<Event>.BadRequest("Only published events can be completed.");
+        }
+
+        ev.EventStatusId = CompletedStatusId;
+        ev.UpdatedAt = DateTimeOffset.UtcNow;
+
+        List<Registration> activeRegistrations = await dbContext.Registrations
+            .Where(registration =>
+                registration.EventId == id &&
+                registration.CancelledAt == null &&
+                (registration.RegistrationStatusId == ConfirmedRegistrationStatusId ||
+                    registration.RegistrationStatusId == WaitlistedRegistrationStatusId))
+            .ToListAsync();
+
+        foreach (Registration registration in activeRegistrations)
+        {
+            string payloadJson = $$"""{"type":"EventCompleted","event_id":"{{id}}","student_id":"{{registration.StudentId}}","registration_id":"{{registration.RegistrationId}}","registration_status_id":{{registration.RegistrationStatusId}}}""";
+            dbContext.NotificationJobs.Add(new NotificationJob
+            {
+                EventId = id,
+                RecipientUserId = registration.StudentId,
+                JobStatusId = PendingNotificationStatusId,
+                Payload = payloadJson,
+                Title = "Event Completed",
+                Message = $"The event \"{ev.Title}\" has been completed.",
                 Channel = "Email"
             });
         }

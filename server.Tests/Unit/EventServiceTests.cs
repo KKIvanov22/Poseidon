@@ -139,6 +139,60 @@ public sealed class EventServiceTests
     }
 
     [Fact]
+    public async Task CloseAsync_CompletesPublishedEventAndNotifiesActiveRegistrations()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        Guid organizerId = Guid.NewGuid();
+        Guid confirmedStudentId = Guid.NewGuid();
+        Guid waitlistedStudentId = Guid.NewGuid();
+        Guid cancelledStudentId = Guid.NewGuid();
+        Event existing = AddEvent(dbContext, organizerId, "Published", statusId: 2);
+        dbContext.Registrations.AddRange(
+            new Registration
+            {
+                RegistrationId = Guid.NewGuid(),
+                EventId = existing.EventId,
+                StudentId = confirmedStudentId,
+                RegistrationStatusId = 1,
+                RegisteredAt = DateTimeOffset.UtcNow.AddMinutes(-3)
+            },
+            new Registration
+            {
+                RegistrationId = Guid.NewGuid(),
+                EventId = existing.EventId,
+                StudentId = waitlistedStudentId,
+                RegistrationStatusId = 2,
+                RegisteredAt = DateTimeOffset.UtcNow.AddMinutes(-2)
+            },
+            new Registration
+            {
+                RegistrationId = Guid.NewGuid(),
+                EventId = existing.EventId,
+                StudentId = cancelledStudentId,
+                RegistrationStatusId = 3,
+                RegisteredAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                CancelledAt = DateTimeOffset.UtcNow
+            });
+        await dbContext.SaveChangesAsync();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        EventOperationResult<Event> result = await service.CloseAsync(existing.EventId, organizerId);
+
+        List<Registration> registrations = await dbContext.Registrations.ToListAsync();
+        Assert.Equal(EventOperationStatus.Success, result.Status);
+        Assert.Equal(4, result.Value!.EventStatusId);
+        Assert.All(
+            registrations.Where(registration => registration.StudentId != cancelledStudentId),
+            registration => Assert.Null(registration.CancelledAt));
+        Assert.Equal(2, await dbContext.NotificationJobs.CountAsync());
+        Assert.All(await dbContext.NotificationJobs.ToListAsync(), job =>
+        {
+            Assert.Equal(1, job.JobStatusId);
+            Assert.Contains("EventCompleted", job.Payload);
+        });
+    }
+
+    [Fact]
     public async Task RegisterAsync_AlreadyActivelyRegistered_ReturnsConflictWithoutOrchestrating()
     {
         await using AppDbContext dbContext = CreateInMemoryDbContext();

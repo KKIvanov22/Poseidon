@@ -50,7 +50,6 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./db/init/01-create-app-user.sh:/docker-entrypoint-initdb.d/01-create-app-user.sh:ro
-      - ./db/sql/db_schema.sql:/docker-entrypoint-initdb.d/02-db-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 10s

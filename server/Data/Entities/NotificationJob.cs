@@ -33,4 +33,5 @@ public class NotificationJob
 
     public Event? Event { get; set; }
     public User? RecipientUser { get; set; }
+    public NotificationJobStatus? JobStatus { get; set; }
 }
