@@ -1,6 +1,6 @@
 using System.Security.Claims;
-using System.Threading.RateLimiting;
 using System.Net.Mail;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
@@ -46,6 +46,16 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 builder.Services.AddScoped<IEventService, EventService>();
 builder.Services.AddScoped<IRegistrationOrchestrator, RegistrationOrchestrator>();
+builder.Services
+    .AddFluentEmail(
+        builder.Configuration["Smtp:FromEmail"] ?? "no-reply@poseidon.com",
+        builder.Configuration["Smtp:FromName"] ?? "Poseidon Events System")
+    .AddSmtpSender(() => new SmtpClient
+    {
+        Host = builder.Configuration["Smtp:Host"] ?? "localhost",
+        Port = builder.Configuration.GetValue("Smtp:Port", 1025),
+        EnableSsl = builder.Configuration.GetValue("Smtp:EnableSsl", false)
+    });
 builder.Services.AddNotificationMessaging(builder.Configuration, builder.Environment);
 builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddRateLimiter(options =>
@@ -81,18 +91,6 @@ builder.Services.AddRateLimiter(options =>
                 AutoReplenishment = true
             }));
 });
-
-// --- FluentEmail & Background Service Registration ---
-builder.Services
-    .AddFluentEmail("no-reply@poseidon.com", "Poseidon Events System")
-    .AddSmtpSender(() => new SmtpClient("localhost")
-    {
-        Port = 1025, // Maps to standard dev email tools like Mailpit
-        EnableSsl = false
-    });
-
-builder.Services.AddHostedService<NotificationConsumerService>();
-// -----------------------------------------------------
 
 builder.Services.AddCors(options =>
 {

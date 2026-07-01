@@ -11,10 +11,6 @@ namespace Poseidon.Server.Endpoints;
 
 public static class UserEndpoints
 {
-    private const int StudentRoleId = 1;
-    private const int TeacherRoleId = 2;
-    private const int AdminRoleId = 3;
-
     public static RouteGroupBuilder MapUserEndpoints(this IEndpointRouteBuilder endpoints)
     {
         RouteGroupBuilder group = endpoints.MapGroup("/users")
@@ -49,8 +45,8 @@ public static class UserEndpoints
         group.MapPatch("/{userId:guid}/role", ChangeRoleAsync)
             .RequireRole(UserRoles.Admin)
             .WithName("ChangeUserRole")
-            .WithSummary("Change a student's role to teacher or organizer")
-            .WithDescription("Allows an admin to promote a student account to Teacher. The organizer alias is accepted and stored as Teacher.")
+            .WithSummary("Change a user's role between student and teacher")
+            .WithDescription("Allows an admin to promote a student account to Teacher or demote a teacher account to Student. The organizer alias is accepted and stored as Teacher.")
             .Accepts<ChangeUserRoleRequest>("application/json")
             .Produces<UserResponse>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status400BadRequest)
@@ -99,59 +95,6 @@ public static class UserEndpoints
         return user is null ? TypedResults.NotFound() : TypedResults.Ok(user);
     }
 
-    private static async Task<Results<Ok<UserResponse>, BadRequest<ProblemHttpResult>, NotFound>> UpdateRoleAsync(
-        Guid userId,
-        UpdateUserRoleRequest request,
-        ClaimsPrincipal principal,
-        AppDbContext dbContext)
-    {
-        if (!TryGetUserId(principal, out Guid adminUserId))
-        {
-            return TypedResults.BadRequest(TypedResults.Problem("Invalid user claim data."));
-        }
-
-        if (userId == adminUserId)
-        {
-            return TypedResults.BadRequest(TypedResults.Problem("You cannot change your own role."));
-        }
-
-        string normalizedRole = request.Role.Trim();
-        if (!string.Equals(normalizedRole, UserRoles.Student, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(normalizedRole, UserRoles.Teacher, StringComparison.OrdinalIgnoreCase))
-        {
-            return TypedResults.BadRequest(TypedResults.Problem("Role must be either Student or Teacher."));
-        }
-
-        User? user = await dbContext.Users
-            .Include(u => u.Role)
-            .SingleOrDefaultAsync(u => u.UserId == userId);
-
-        if (user is null)
-        {
-            return TypedResults.NotFound();
-        }
-
-        if (user.RoleId == AdminRoleId)
-        {
-            return TypedResults.BadRequest(TypedResults.Problem("Admin roles cannot be changed through this endpoint."));
-        }
-
-        int newRoleId = string.Equals(normalizedRole, UserRoles.Teacher, StringComparison.OrdinalIgnoreCase)
-            ? TeacherRoleId
-            : StudentRoleId;
-
-        if (user.RoleId == newRoleId)
-        {
-            return TypedResults.Ok(MapToResponse(user));
-        }
-
-        user.RoleId = newRoleId;
-        await dbContext.SaveChangesAsync();
-
-        user.Role = await dbContext.UserRoles.FindAsync(newRoleId);
-        return TypedResults.Ok(MapToResponse(user));
-    }
-
     private static async Task<UserResponse?> QueryUserResponse(AppDbContext dbContext, Guid userId)
     {
         return await dbContext.Users
@@ -186,9 +129,9 @@ public static class UserEndpoints
         AppDbContext dbContext)
     {
         string requestedRole = NormalizeRoleName(request.Role);
-        if (requestedRole != UserRoles.Teacher)
+        if (requestedRole is not (UserRoles.Student or UserRoles.Teacher))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("Role must be Teacher or Organizer."));
+            return TypedResults.BadRequest(TypedResults.Problem("Role must be Student, Teacher, or Organizer."));
         }
 
         var user = await dbContext.Users
@@ -200,9 +143,14 @@ public static class UserEndpoints
             return TypedResults.NotFound();
         }
 
-        if (!string.Equals(user.Role?.RoleName, UserRoles.Student, StringComparison.Ordinal))
+        if (string.Equals(user.Role?.RoleName, UserRoles.Admin, StringComparison.Ordinal))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("Only student accounts can be promoted by this endpoint."));
+            return TypedResults.BadRequest(TypedResults.Problem("Admin accounts cannot be changed by this endpoint."));
+        }
+
+        if (string.Equals(user.Role?.RoleName, requestedRole, StringComparison.Ordinal))
+        {
+            return TypedResults.Ok(MapToResponse(user));
         }
 
         var role = await dbContext.UserRoles
@@ -232,7 +180,9 @@ public static class UserEndpoints
             ? UserRoles.Teacher
             : normalizedRole.Equals(UserRoles.Teacher, StringComparison.OrdinalIgnoreCase)
                 ? UserRoles.Teacher
-                : normalizedRole;
+                : normalizedRole.Equals(UserRoles.Student, StringComparison.OrdinalIgnoreCase)
+                    ? UserRoles.Student
+                    : normalizedRole;
     }
 }
 

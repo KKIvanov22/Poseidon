@@ -1,3 +1,6 @@
+using FluentEmail.Core;
+using FluentEmail.Core.Models;
+
 namespace Poseidon.Server.Services.Notifications;
 
 public interface IEmailNotificationSender
@@ -5,17 +8,37 @@ public interface IEmailNotificationSender
     Task SendAsync(EmailNotification notification, CancellationToken cancellationToken);
 }
 
-public sealed class LogEmailNotificationSender(ILogger<LogEmailNotificationSender> logger) : IEmailNotificationSender
+public sealed class SmtpEmailNotificationSender(
+    IServiceScopeFactory scopeFactory,
+    ILogger<SmtpEmailNotificationSender> logger) : IEmailNotificationSender
 {
-    public Task SendAsync(EmailNotification notification, CancellationToken cancellationToken)
+    public async Task SendAsync(EmailNotification notification, CancellationToken cancellationToken)
     {
-        logger.LogInformation(
-            "Email notification {NotificationJobId} for user {RecipientUserId} would be sent to {RecipientEmail}: {Title}",
-            notification.NotificationJobId,
-            notification.RecipientUserId,
-            notification.RecipientEmail,
-            notification.Title);
+        using IServiceScope scope = scopeFactory.CreateScope();
+        IFluentEmailFactory emailFactory = scope.ServiceProvider.GetRequiredService<IFluentEmailFactory>();
 
-        return Task.CompletedTask;
+        SendResponse response = await emailFactory
+            .Create()
+            .To(notification.RecipientEmail)
+            .Subject(notification.Title)
+            .Body(notification.Message, isHtml: false)
+            .SendAsync(cancellationToken);
+
+        if (!response.Successful)
+        {
+            string error = string.Join("; ", response.ErrorMessages);
+            logger.LogWarning(
+                "Email notification {NotificationJobId} failed for {RecipientEmail}: {Error}",
+                notification.NotificationJobId,
+                notification.RecipientEmail,
+                error);
+
+            throw new InvalidOperationException($"Email notification failed: {error}");
+        }
+
+        logger.LogInformation(
+            "Email notification {NotificationJobId} sent to {RecipientEmail}.",
+            notification.NotificationJobId,
+            notification.RecipientEmail);
     }
 }

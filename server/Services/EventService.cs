@@ -17,9 +17,10 @@ public interface IEventService
     Task<EventOperationResult<Event>> CreateAsync(Guid organizerId, EventDetails details);
     Task<List<Event>> GetAllAsync(Guid? viewerId, string viewerRole);
     Task<List<Event>> GetAllSortedAsync(EventListSort sort, Guid? viewerId, string viewerRole);
+    Task<List<Event>> GetByOrganizerAsync(Guid organizerId);
     Task<Event?> GetByIdAsync(Guid id, Guid? viewerId, string viewerRole);
     Task<EventOperationResult<Event>> UpdateAsync(Guid id, Guid organizerId, EventDetails details);
-    Task<EventOperationResult<Event>> PublishAsync(Guid id, Guid organizerId);
+    Task<EventOperationResult<Event>> PublishAsync(Guid id, Guid organizerId, bool isAdmin = false);
     Task<EventOperationResult<Event>> CancelAsync(Guid id, Guid organizerId);
     Task<EventOperationResult<RegistrationResult>> RegisterAsync(Guid eventId, Guid studentId);
 }
@@ -76,6 +77,15 @@ public sealed class EventService(
         return query.ToListAsync();
     }
 
+    public Task<List<Event>> GetByOrganizerAsync(Guid organizerId)
+    {
+        return dbContext.Events
+            .AsNoTracking()
+            .Where(e => e.OrganizerId == organizerId)
+            .OrderByDescending(e => e.StartsAt)
+            .ToListAsync();
+    }
+
     public Task<Event?> GetByIdAsync(Guid id, Guid? viewerId, string viewerRole)
     {
         return ApplyVisibility(dbContext.Events.AsNoTracking(), viewerId, viewerRole)
@@ -118,7 +128,7 @@ public sealed class EventService(
         return EventOperationResult<Event>.Success(ev);
     }
 
-    public async Task<EventOperationResult<Event>> PublishAsync(Guid id, Guid organizerId)
+    public async Task<EventOperationResult<Event>> PublishAsync(Guid id, Guid organizerId, bool isAdmin = false)
     {
         Event? ev = await dbContext.Events.FirstOrDefaultAsync(e => e.EventId == id);
         if (ev is null)
@@ -126,7 +136,7 @@ public sealed class EventService(
             return EventOperationResult<Event>.NotFound();
         }
 
-        if (ev.OrganizerId != organizerId)
+        if (!isAdmin && ev.OrganizerId != organizerId)
         {
             return EventOperationResult<Event>.Forbidden();
         }
