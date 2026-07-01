@@ -55,6 +55,14 @@ public static class EventEndpoints
             .Produces<List<EventResponse>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status401Unauthorized);
 
+        group.MapGet("/mine", GetMineAsync)
+            .RequireRole(UserRoles.Teacher, UserRoles.Admin)
+            .WithName("GetMyEvents")
+            .WithSummary("Get events created by the current user")
+            .Produces<List<EventResponse>>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status403Forbidden);
+
         // BE08: GET /events/{id}
         group.MapGet("/{id:guid}", GetByIdAsync)
             .WithName("GetEventById")
@@ -141,9 +149,20 @@ public static class EventEndpoints
         return TypedResults.Created($"/events/{newEvent.EventId}", MapToResponse(newEvent));
     }
 
-    private static async Task<Ok<List<EventResponse>>> GetAllAsync(
+    private static async Task<Results<Ok<List<EventResponse>>, BadRequest<ProblemHttpResult>>> GetMineAsync(
         ClaimsPrincipal user,
         IEventService eventService)
+    {
+        if (!TryGetUserId(user, out Guid organizerId))
+        {
+            return TypedResults.BadRequest(TypedResults.Problem("Invalid user claim data."));
+        }
+
+        List<Event> events = await eventService.GetByOrganizerAsync(organizerId);
+        return TypedResults.Ok(events.Select(MapToResponse).ToList());
+    }
+
+    private static async Task<Ok<List<EventResponse>>> GetAllAsync(IEventService eventService)
     {
         List<Event> events = await eventService.GetAllAsync(GetUserIdOrNull(user), GetRole(user));
         return TypedResults.Ok(events.Select(MapToResponse).ToList());
