@@ -15,9 +15,9 @@ public enum EventListSort
 public interface IEventService
 {
     Task<EventOperationResult<Event>> CreateAsync(Guid organizerId, EventDetails details);
-    Task<List<Event>> GetAllAsync();
-    Task<List<Event>> GetAllSortedAsync(EventListSort sort);
-    Task<Event?> GetByIdAsync(Guid id);
+    Task<List<Event>> GetAllAsync(Guid? viewerId, string viewerRole);
+    Task<List<Event>> GetAllSortedAsync(EventListSort sort, Guid? viewerId, string viewerRole);
+    Task<Event?> GetByIdAsync(Guid id, Guid? viewerId, string viewerRole);
     Task<EventOperationResult<Event>> UpdateAsync(Guid id, Guid organizerId, EventDetails details);
     Task<EventOperationResult<Event>> PublishAsync(Guid id, Guid organizerId);
     Task<EventOperationResult<Event>> CancelAsync(Guid id, Guid organizerId);
@@ -58,12 +58,12 @@ public sealed class EventService(
         return EventOperationResult<Event>.Success(newEvent);
     }
 
-    public Task<List<Event>> GetAllAsync() =>
-        GetAllSortedAsync(EventListSort.StartDateDescending);
+    public Task<List<Event>> GetAllAsync(Guid? viewerId, string viewerRole) =>
+        GetAllSortedAsync(EventListSort.StartDateDescending, viewerId, viewerRole);
 
-    public Task<List<Event>> GetAllSortedAsync(EventListSort sort)
+    public Task<List<Event>> GetAllSortedAsync(EventListSort sort, Guid? viewerId, string viewerRole)
     {
-        IQueryable<Event> query = dbContext.Events.AsNoTracking();
+        IQueryable<Event> query = ApplyVisibility(dbContext.Events.AsNoTracking(), viewerId, viewerRole);
 
         query = sort switch
         {
@@ -76,10 +76,9 @@ public sealed class EventService(
         return query.ToListAsync();
     }
 
-    public Task<Event?> GetByIdAsync(Guid id)
+    public Task<Event?> GetByIdAsync(Guid id, Guid? viewerId, string viewerRole)
     {
-        return dbContext.Events
-            .AsNoTracking()
+        return ApplyVisibility(dbContext.Events.AsNoTracking(), viewerId, viewerRole)
             .FirstOrDefaultAsync(e => e.EventId == id);
     }
 
@@ -227,6 +226,21 @@ public sealed class EventService(
         }
 
         return null;
+    }
+
+    private static IQueryable<Event> ApplyVisibility(IQueryable<Event> query, Guid? viewerId, string viewerRole)
+    {
+        if (string.Equals(viewerRole, "Admin", StringComparison.Ordinal))
+        {
+            return query;
+        }
+
+        if (string.Equals(viewerRole, "Teacher", StringComparison.Ordinal) && viewerId.HasValue)
+        {
+            return query.Where(e => e.OrganizerId == viewerId.Value);
+        }
+
+        return query.Where(e => e.EventStatusId == PublishedStatusId);
     }
 }
 

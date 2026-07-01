@@ -1,6 +1,8 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Poseidon.Server.Auth;
 using Poseidon.Server.Data;
 using Poseidon.Server.RateLimiting;
 
@@ -16,33 +18,69 @@ public static class WaitlistEndpoints
             .RequireAuthorization();
 
         group.MapGet("/", GetWaitlistAsync)
+            .RequireRole(UserRoles.Teacher, UserRoles.Admin)
             .WithName("GetEventWaitlist")
-            .WithSummary("Retrieve the current waitlisted queue position details for an event.")
+            .WithSummary("Retrieve the ordered waitlist for an organizer's event.")
             .Produces<List<WaitlistResponse>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status403Forbidden)
             .Produces(StatusCodes.Status404NotFound);
 
         return group;
     }
 
-    private static async Task<Results<Ok<List<WaitlistResponse>>, NotFound>> GetWaitlistAsync(
+    private static async Task<Results<Ok<List<WaitlistResponse>>, ForbidHttpResult, NotFound>> GetWaitlistAsync(
         Guid id,
+        ClaimsPrincipal user,
         AppDbContext dbContext)
     {
-        // Confirm the event exists first
-        var eventExists = await dbContext.Events.AnyAsync(e => e.EventId == id);
-        if (!eventExists) return TypedResults.NotFound();
+        var ev = await dbContext.Events
+            .AsNoTracking()
+            .Where(e => e.EventId == id)
+            .Select(e => new { e.OrganizerId })
+            .SingleOrDefaultAsync();
 
-        // Querying registration skeleton records that fall into waitlist status
-        // (Assuming a StatusId or boolean tracks waitlisting in your database schema)
-        var waitlist = await dbContext.Notifications
-            .Where(n => n.EventId == id && n.NotificationType == "RegistrationWaitlisted")
-            .OrderBy(n => n.CreatedAt)
-            .Select((n, index) => new WaitlistResponse(n.UserId, index + 1, n.CreatedAt))
+        if (ev is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        if (!IsAdmin(user) && (!TryGetUserId(user, out Guid organizerId) || ev.OrganizerId != organizerId))
+        {
+            return TypedResults.Forbid();
+        }
+
+        var waitlistedRegistrations = await dbContext.Registrations
+            .AsNoTracking()
+            .Where(registration =>
+                registration.EventId == id &&
+                registration.RegistrationStatusId == 2 &&
+                registration.CancelledAt == null)
+            .OrderBy(registration => registration.RegisteredAt)
+            .Select(registration => new
+            {
+                registration.RegistrationId,
+                registration.StudentId,
+                registration.RegisteredAt
+            })
             .ToListAsync();
+
+        List<WaitlistResponse> waitlist = waitlistedRegistrations
+            .Select((registration, index) => new WaitlistResponse(
+                registration.RegistrationId,
+                registration.StudentId,
+                index + 1,
+                registration.RegisteredAt))
+            .ToList();
 
         return TypedResults.Ok(waitlist);
     }
+
+    private static bool TryGetUserId(ClaimsPrincipal user, out Guid userId) =>
+        Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out userId);
+
+    private static bool IsAdmin(ClaimsPrincipal user) =>
+        string.Equals(user.FindFirstValue(JwtClaimNames.Role), UserRoles.Admin, StringComparison.Ordinal);
 }
 
-public sealed record WaitlistResponse(Guid UserId, int Position, DateTimeOffset JoinedAt);
+public sealed record WaitlistResponse(Guid RegistrationId, Guid StudentId, int Position, DateTimeOffset JoinedAt);
