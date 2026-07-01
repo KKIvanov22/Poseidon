@@ -19,6 +19,7 @@ public sealed class NotificationJobProcessor(
     private const string RegistrationWaitlistedType = "RegistrationWaitlisted";
     private const string RegistrationCancelledType = "RegistrationCancelled";
     private const string EventCancelledType = "EventCancelled";
+    private const string EventCompletedType = "EventCompleted";
     private const string WaitlistPromotedType = "WaitlistPromoted";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -123,6 +124,7 @@ public sealed class NotificationJobProcessor(
         string.Equals(type, RegistrationWaitlistedType, StringComparison.Ordinal) ||
         string.Equals(type, RegistrationCancelledType, StringComparison.Ordinal) ||
         string.Equals(type, EventCancelledType, StringComparison.Ordinal) ||
+        string.Equals(type, EventCompletedType, StringComparison.Ordinal) ||
         string.Equals(type, WaitlistPromotedType, StringComparison.Ordinal);
 
     private async Task MarkSucceededAsync(NotificationJob job, CancellationToken cancellationToken)
