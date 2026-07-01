@@ -97,6 +97,9 @@ builder.Services.AddCors(options =>
     string[] allowedOrigins = builder.Configuration
         .GetSection("Cors:AllowedOrigins")
         .Get<string[]>() ?? ["http://localhost:3000"];
+    allowedOrigins = allowedOrigins
+        .Where(origin => !string.IsNullOrWhiteSpace(origin))
+        .ToArray();
 
     options.AddPolicy(ClientCorsPolicy, policy =>
     {
@@ -140,6 +143,7 @@ app.MapEventEndpoints();
 app.MapRegistrationEndpoints();
 app.MapWaitlistEndpoints(); // Maps the new waitlist retrieval route
 app.MapNotificationJobEndpoints();
+app.MapPushDeviceTokenEndpoints();
 
 app.Run();
 

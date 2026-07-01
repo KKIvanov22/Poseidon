@@ -11,6 +11,7 @@ public sealed record NotificationMessage(
 
 public sealed record EmailNotification(
     Guid NotificationJobId,
+    Guid EventId,
     Guid RecipientUserId,
     string RecipientEmail,
     string Title,

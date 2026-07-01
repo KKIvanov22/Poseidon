@@ -209,6 +209,7 @@ public sealed class NotificationConsumer(
 
         return new EmailNotification(
             message.NotificationJobId,
+            message.EventId,
             message.RecipientUserId,
             recipientEmail,
             message.Title,
