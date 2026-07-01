@@ -162,7 +162,9 @@ public static class EventEndpoints
         return TypedResults.Ok(events.Select(MapToResponse).ToList());
     }
 
-    private static async Task<Ok<List<EventResponse>>> GetAllAsync(IEventService eventService)
+    private static async Task<Ok<List<EventResponse>>> GetAllAsync(
+        ClaimsPrincipal user,
+        IEventService eventService)
     {
         List<Event> events = await eventService.GetAllAsync(GetUserIdOrNull(user), GetRole(user));
         return TypedResults.Ok(events.Select(MapToResponse).ToList());
@@ -228,7 +230,7 @@ public static class EventEndpoints
             return TypedResults.BadRequest(TypedResults.Problem("Invalid user claim data."));
         }
 
-        EventOperationResult<Event> result = await eventService.PublishAsync(id, organizerId);
+        EventOperationResult<Event> result = await eventService.PublishAsync(id, organizerId, IsAdmin(user));
         return ToEventMutationHttpResult(result);
     }
 

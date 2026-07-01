@@ -6,21 +6,28 @@ import {
   FiShield,
   FiUsers,
   FiBell,
+  FiCalendar,
+  FiCheckCircle,
 } from 'react-icons/fi';
 import {
+  getEvents,
   listUsers,
   updateUserRole,
   getPendingNotificationJobs,
   completeNotificationJob,
   retryNotificationJob,
+  publishEvent,
 } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useApiError } from '../auth/useApiError';
 import DashboardLayout from '../components/DashboardLayout';
+import EventCard from '../components/events/EventCard';
+import { TEACHER_FILTERS } from '../lib/eventUtils';
 import { normalizeRole, ROLES } from '../lib/roles';
 
 const TABS = [
   { key: 'users', label: 'User management', icon: FiUsers },
+  { key: 'events', label: 'Event approvals', icon: FiCalendar },
   { key: 'jobs', label: 'Notification jobs', icon: FiBell },
 ];
 
@@ -44,13 +51,20 @@ export default function AdminDashboard() {
 
   const [activeTab, setActiveTab] = useState('users');
   const [users, setUsers] = useState([]);
+  const [events, setEvents] = useState([]);
   const [jobs, setJobs] = useState([]);
   const [usersStatus, setUsersStatus] = useState('loading');
+  const [eventsStatus, setEventsStatus] = useState('idle');
   const [jobsStatus, setJobsStatus] = useState('idle');
   const [usersError, setUsersError] = useState('');
+  const [eventsError, setEventsError] = useState('');
   const [jobsError, setJobsError] = useState('');
   const [search, setSearch] = useState('');
+  const [eventSearch, setEventSearch] = useState('');
+  const [eventFilter, setEventFilter] = useState('all');
+  const [now, setNow] = useState(new Date());
   const [updatingUserId, setUpdatingUserId] = useState(null);
+  const [publishingEventId, setPublishingEventId] = useState(null);
   const [actionJobId, setActionJobId] = useState(null);
 
   const loadUsers = useCallback(async () => {
@@ -79,15 +93,39 @@ export default function AdminDashboard() {
     }
   }, [token, handleApiError]);
 
+  const loadEvents = useCallback(async () => {
+    setEventsStatus('loading');
+    try {
+      const data = await getEvents(token);
+      setEvents(data);
+      setEventsStatus('ready');
+    } catch (err) {
+      if (handleApiError(err)) return;
+      setEventsError(err.message || 'Failed to load events.');
+      setEventsStatus('error');
+    }
+  }, [token, handleApiError]);
+
   useEffect(() => {
     loadUsers();
   }, [loadUsers]);
+
+  useEffect(() => {
+    if (activeTab === 'events' && eventsStatus === 'idle') {
+      loadEvents();
+    }
+  }, [activeTab, eventsStatus, loadEvents]);
 
   useEffect(() => {
     if (activeTab === 'jobs' && jobsStatus === 'idle') {
       loadJobs();
     }
   }, [activeTab, jobsStatus, loadJobs]);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleRoleChange = async (targetUser) => {
     const currentRole = normalizeRole(targetUser.role);
@@ -135,6 +173,23 @@ export default function AdminDashboard() {
     }
   };
 
+  const handlePublishEvent = async (eventId) => {
+    setPublishingEventId(eventId);
+    setEventsError('');
+
+    try {
+      const updated = await publishEvent(token, eventId);
+      setEvents((prev) =>
+        prev.map((event) => (event.eventId === updated.eventId ? updated : event))
+      );
+    } catch (err) {
+      if (handleApiError(err)) return;
+      setEventsError(err.message || 'Failed to approve and publish event.');
+    } finally {
+      setPublishingEventId(null);
+    }
+  };
+
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return users;
@@ -149,6 +204,19 @@ export default function AdminDashboard() {
   const manageableUsers = filteredUsers.filter(
     (u) => normalizeRole(u.role) !== ROLES.ADMIN
   );
+
+  const filteredEvents = useMemo(() => {
+    const q = eventSearch.trim().toLowerCase();
+    return events
+      .filter((event) => (eventFilter === 'all' ? true : event.eventStatusId === eventFilter))
+      .filter((event) => {
+        if (!q) return true;
+        return (
+          event.title.toLowerCase().includes(q) ||
+          (event.locationText || '').toLowerCase().includes(q)
+        );
+      });
+  }, [events, eventFilter, eventSearch]);
 
   const firstName = user?.displayName?.split(' ')[0];
 
@@ -290,6 +358,111 @@ export default function AdminDashboard() {
                   )}
                 </tbody>
               </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === 'events' && (
+        <section aria-labelledby="events-heading">
+          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap gap-2">
+              {TEACHER_FILTERS.map((filter) => (
+                <button
+                  key={filter.key}
+                  type="button"
+                  onClick={() => setEventFilter(filter.key)}
+                  className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition ${
+                    eventFilter === filter.key
+                      ? 'bg-brand-500 text-white shadow-sm'
+                      : 'bg-white text-slate-600 ring-1 ring-inset ring-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <FiSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="search"
+                  value={eventSearch}
+                  onChange={(e) => setEventSearch(e.target.value)}
+                  placeholder="Search events"
+                  aria-label="Search events"
+                  className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-ink outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100 sm:w-64"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={loadEvents}
+                aria-label="Refresh events"
+                className="flex items-center justify-center rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:border-brand-400 hover:text-brand-500"
+              >
+                <FiRefreshCw className={eventsStatus === 'loading' ? 'animate-spin' : ''} />
+              </button>
+            </div>
+          </div>
+
+          {eventsError && eventsStatus !== 'loading' && (
+            <p className="mb-4 rounded-lg border border-accent-100 bg-accent-50 px-3 py-2 text-sm text-accent-600">
+              {eventsError}
+            </p>
+          )}
+
+          {eventsStatus === 'error' && (
+            <div className="flex flex-col items-center gap-3 rounded-2xl border border-accent-100 bg-accent-50 px-6 py-14 text-center">
+              <FiAlertCircle className="text-3xl text-accent-600" />
+              <p className="font-semibold text-ink">Couldn&apos;t load events</p>
+              <button
+                type="button"
+                onClick={loadEvents}
+                className="mt-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-600"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+
+          {eventsStatus === 'loading' && (
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="h-64 animate-pulse rounded-2xl bg-white shadow-card" />
+              ))}
+            </div>
+          )}
+
+          {eventsStatus === 'ready' && filteredEvents.length === 0 && (
+            <div className="rounded-2xl border border-slate-100 bg-white px-6 py-14 text-center text-slate-500">
+              No events found.
+            </div>
+          )}
+
+          {eventsStatus === 'ready' && filteredEvents.length > 0 && (
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {filteredEvents.map((event, index) => (
+                <EventCard
+                  key={event.eventId}
+                  event={event}
+                  now={now}
+                  index={index}
+                  footer={
+                    event.eventStatusId === 1 ? (
+                      <button
+                        type="button"
+                        disabled={publishingEventId === event.eventId}
+                        onClick={() => handlePublishEvent(event.eventId)}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <FiCheckCircle />
+                        {publishingEventId === event.eventId ? 'Publishing...' : 'Approve and publish'}
+                      </button>
+                    ) : null
+                  }
+                />
+              ))}
             </div>
           )}
         </section>

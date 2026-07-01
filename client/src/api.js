@@ -57,6 +57,12 @@ export const getEvents = (token) => request('/events', { token });
 
 export const getMyEvents = (token) => request('/events/mine', { token });
 
+export const createEvent = (token, event) =>
+  request('/events', { method: 'POST', token, body: event });
+
+export const publishEvent = (token, eventId) =>
+  request(`/events/${eventId}/publish`, { method: 'POST', token });
+
 export const registerForEvent = (token, eventId) =>
   request(`/events/${eventId}/register`, { method: 'POST', token });
 
@@ -66,7 +72,7 @@ export const getCurrentUser = (token) => request('/users/me', { token });
 export const listUsers = (token) => request('/users', { token });
 
 export const updateUserRole = (token, userId, role) =>
-  request(`/users/${userId}/role`, { method: 'PUT', token, body: { role } });
+  request(`/users/${userId}/role`, { method: 'PATCH', token, body: { role } });
 
 // Admin notification jobs
 export const getPendingNotificationJobs = (token, limit = 25) =>

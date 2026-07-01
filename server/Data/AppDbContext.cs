@@ -9,7 +9,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<Event> Events => Set<Event>(); 
     public DbSet<Registration> Registrations => Set<Registration>();
-    public DbSet<Notification> Notifications => Set<Notification>();
     public DbSet<NotificationJob> NotificationJobs => Set<NotificationJob>();
     public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
 
@@ -102,24 +101,6 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .WithMany()
                 .HasForeignKey(registration => registration.StudentId)
                 .OnDelete(DeleteBehavior.Restrict);
-        });
-
-        modelBuilder.Entity<Notification>(entity =>
-        {
-            entity.ToTable("notifications", "public");
-            entity.HasKey(n => n.NotificationId);
-
-            entity.Property(n => n.NotificationId).HasColumnName("notification_id").HasDefaultValueSql("gen_random_uuid()");
-            entity.Property(n => n.UserId).HasColumnName("user_id");
-            entity.Property(n => n.EventId).HasColumnName("event_id");
-            entity.Property(n => n.NotificationType).HasColumnName("notification_type").HasMaxLength(100).IsRequired();
-            entity.Property(n => n.RecipientEmail).HasColumnName("recipient_email").HasMaxLength(255).IsRequired();
-            entity.Property(n => n.MessageBody).HasColumnName("message_body").IsRequired();
-            entity.Property(n => n.IsSent).HasColumnName("is_sent").IsRequired();
-            entity.Property(n => n.RetryCount).HasColumnName("retry_count").IsRequired();
-            entity.Property(n => n.FailureReason).HasColumnName("failure_reason").HasMaxLength(255);
-            entity.Property(n => n.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
-            entity.Property(n => n.SentAt).HasColumnName("sent_at");
         });
 
         modelBuilder.Entity<NotificationJob>(entity =>

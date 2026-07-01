@@ -39,7 +39,7 @@ public static class NotificationServiceCollectionExtensions
                 "RabbitMq production configuration must enable TLS unless the broker host is local or private.")
             .ValidateOnStart();
 
-        services.AddSingleton<IEmailNotificationSender, LogEmailNotificationSender>();
+        services.AddSingleton<IEmailNotificationSender, SmtpEmailNotificationSender>();
         services.AddScoped<INotificationJobReader, NotificationJobReader>();
         services.AddScoped<INotificationJobProcessor, NotificationJobProcessor>();
         services.AddScoped<INotificationJobCompletionService, NotificationJobCompletionService>();
