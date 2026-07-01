@@ -1,0 +1,159 @@
+using Microsoft.EntityFrameworkCore;
+using Poseidon.Server.Data;
+using Poseidon.Server.Data.Entities;
+using Poseidon.Server.Services;
+
+namespace Poseidon.Server.Tests.Unit;
+
+public sealed class EventServiceTests
+{
+    [Fact]
+    public async Task CreateAsync_ValidDetails_CreatesDraftEventWithTrimmedText()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+        Guid organizerId = Guid.NewGuid();
+
+        EventOperationResult<Event> result = await service.CreateAsync(
+            organizerId,
+            ValidDetails(title: "  Workshop  ", description: "  Intro  ", locationText: "  Room 9  "));
+
+        Assert.Equal(EventOperationStatus.Success, result.Status);
+        Assert.Equal(1, result.Value!.EventStatusId);
+        Assert.Equal("Workshop", result.Value.Title);
+        Assert.Equal("Intro", result.Value.Description);
+        Assert.Equal("Room 9", result.Value.LocationText);
+        Assert.Equal(organizerId, result.Value.OrganizerId);
+        Assert.Equal(1, await dbContext.Events.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateAsync_EndBeforeStart_ReturnsBadRequestAndDoesNotPersist()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+        DateTimeOffset startsAt = DateTimeOffset.UtcNow.AddDays(2);
+
+        EventOperationResult<Event> result = await service.CreateAsync(
+            Guid.NewGuid(),
+            ValidDetails(startsAt: startsAt, endsAt: startsAt));
+
+        Assert.Equal(EventOperationStatus.BadRequest, result.Status);
+        Assert.Equal("The event must end after it starts.", result.Problem);
+        Assert.Empty(await dbContext.Events.ToListAsync());
+    }
+
+    [Fact]
+    public async Task UpdateAsync_DifferentOrganizer_ReturnsForbiddenAndLeavesEventUnchanged()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        Guid originalOrganizerId = Guid.NewGuid();
+        Event existing = AddEvent(dbContext, originalOrganizerId, "Original", statusId: 1);
+        await dbContext.SaveChangesAsync();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        EventOperationResult<Event> result = await service.UpdateAsync(
+            existing.EventId,
+            Guid.NewGuid(),
+            ValidDetails(title: "Changed"));
+
+        Assert.Equal(EventOperationStatus.Forbidden, result.Status);
+        Assert.Equal("Original", (await dbContext.Events.SingleAsync()).Title);
+    }
+
+    [Fact]
+    public async Task PublishAsync_AdminCanPublishEventOwnedByAnotherOrganizer()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        Event existing = AddEvent(dbContext, Guid.NewGuid(), "Draft", statusId: 1);
+        await dbContext.SaveChangesAsync();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        EventOperationResult<Event> result = await service.PublishAsync(
+            existing.EventId,
+            Guid.NewGuid(),
+            isAdmin: true);
+
+        Assert.Equal(EventOperationStatus.Success, result.Status);
+        Assert.Equal(2, result.Value!.EventStatusId);
+        Assert.NotNull(result.Value.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task RegisterAsync_AlreadyActivelyRegistered_ReturnsConflictWithoutOrchestrating()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        Guid studentId = Guid.NewGuid();
+        Event existing = AddEvent(dbContext, Guid.NewGuid(), "Published", statusId: 2);
+        dbContext.Registrations.Add(new Registration
+        {
+            RegistrationId = Guid.NewGuid(),
+            EventId = existing.EventId,
+            StudentId = studentId,
+            RegistrationStatusId = 1,
+            RegisteredAt = DateTimeOffset.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+        var orchestrator = new FakeRegistrationOrchestrator();
+        var service = new EventService(dbContext, orchestrator);
+
+        EventOperationResult<RegistrationResult> result = await service.RegisterAsync(existing.EventId, studentId);
+
+        Assert.Equal(EventOperationStatus.Conflict, result.Status);
+        Assert.Equal("You are already registered for this event.", result.Problem);
+        Assert.Equal(0, orchestrator.RegisterCallCount);
+    }
+
+    private static AppDbContext CreateInMemoryDbContext()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        return new AppDbContext(options);
+    }
+
+    private static EventDetails ValidDetails(
+        string title = "Event",
+        string? description = "Description",
+        DateTimeOffset? startsAt = null,
+        DateTimeOffset? endsAt = null,
+        int capacity = 10,
+        string? locationText = "Auditorium")
+    {
+        DateTimeOffset start = startsAt ?? DateTimeOffset.UtcNow.AddDays(1);
+        return new EventDetails(title, description, start, endsAt ?? start.AddHours(2), capacity, locationText);
+    }
+
+    private static Event AddEvent(AppDbContext dbContext, Guid organizerId, string title, int statusId)
+    {
+        var ev = new Event
+        {
+            EventId = Guid.NewGuid(),
+            OrganizerId = organizerId,
+            EventStatusId = statusId,
+            Title = title,
+            StartsAt = DateTimeOffset.UtcNow.AddDays(1),
+            EndsAt = DateTimeOffset.UtcNow.AddDays(1).AddHours(2),
+            Capacity = 5,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        dbContext.Events.Add(ev);
+        return ev;
+    }
+
+    private sealed class FakeRegistrationOrchestrator : IRegistrationOrchestrator
+    {
+        public int RegisterCallCount { get; private set; }
+
+        public Task<(Guid RegistrationId, int StatusId)> RegisterStudentTransactionAsync(Guid eventId, Guid studentId)
+        {
+            RegisterCallCount++;
+            return Task.FromResult((Guid.NewGuid(), 1));
+        }
+
+        public Task<CancelRegistrationTransactionResult> CancelRegistrationTransactionAsync(Guid eventId, Guid studentId) =>
+            Task.FromResult(CancelRegistrationTransactionResult.NotFound());
+    }
+}
