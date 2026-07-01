@@ -32,6 +32,10 @@ public sealed class EventService(
     private const int DraftStatusId = 1;
     private const int PublishedStatusId = 2;
     private const int CancelledStatusId = 3;
+    private const int ConfirmedRegistrationStatusId = 1;
+    private const int WaitlistedRegistrationStatusId = 2;
+    private const int CancelledRegistrationStatusId = 3;
+    private const int PendingNotificationStatusId = 1;
 
     public async Task<EventOperationResult<Event>> CreateAsync(Guid organizerId, EventDetails details)
     {
@@ -173,6 +177,34 @@ public sealed class EventService(
 
         ev.EventStatusId = CancelledStatusId;
         ev.UpdatedAt = DateTimeOffset.UtcNow;
+
+        List<Registration> activeRegistrations = await dbContext.Registrations
+            .Where(registration =>
+                registration.EventId == id &&
+                registration.CancelledAt == null &&
+                (registration.RegistrationStatusId == ConfirmedRegistrationStatusId ||
+                    registration.RegistrationStatusId == WaitlistedRegistrationStatusId))
+            .ToListAsync();
+
+        DateTimeOffset cancelledAt = DateTimeOffset.UtcNow;
+        foreach (Registration registration in activeRegistrations)
+        {
+            int previousStatusId = registration.RegistrationStatusId;
+            registration.RegistrationStatusId = CancelledRegistrationStatusId;
+            registration.CancelledAt = cancelledAt;
+
+            string payloadJson = $$"""{"type":"EventCancelled","event_id":"{{id}}","student_id":"{{registration.StudentId}}","registration_id":"{{registration.RegistrationId}}","previous_status_id":{{previousStatusId}}}""";
+            dbContext.NotificationJobs.Add(new NotificationJob
+            {
+                EventId = id,
+                RecipientUserId = registration.StudentId,
+                JobStatusId = PendingNotificationStatusId,
+                Payload = payloadJson,
+                Title = "Event Cancelled",
+                Message = $"The event \"{ev.Title}\" has been cancelled.",
+                Channel = "Email"
+            });
+        }
 
         await dbContext.SaveChangesAsync();
         return EventOperationResult<Event>.Success(ev);
