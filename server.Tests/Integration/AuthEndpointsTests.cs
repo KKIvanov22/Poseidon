@@ -37,6 +37,17 @@ public sealed class AuthEndpointsTests
         Assert.False(string.IsNullOrWhiteSpace(body.AccessToken));
     }
 
+    [Fact]
+    public async Task Events_WithoutBearerToken_ReturnsUnauthorized()
+    {
+        await using var factory = new PoseidonWebApplicationFactory();
+        using HttpClient client = factory.CreateClient();
+
+        HttpResponseMessage response = await client.GetAsync("/events");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
     private sealed class PoseidonWebApplicationFactory : WebApplicationFactory<Program>
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
