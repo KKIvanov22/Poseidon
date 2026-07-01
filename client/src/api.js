@@ -57,31 +57,6 @@ export const logout = (token) =>
   request('/auth/logout', { method: 'POST', token });
 
 export const getEvents = (token) => request('/events', { token });
-
-export const createEvent = (token, event) =>
-  request('/events', { method: 'POST', token, body: event });
-
-export const updateEvent = (token, eventId, event) =>
-  request(`/events/${eventId}`, { method: 'PUT', token, body: event });
-
-export const publishEvent = (token, eventId) =>
-  request(`/events/${eventId}/publish`, { method: 'POST', token });
-
-export const cancelEvent = (token, eventId) =>
-  request(`/events/${eventId}/cancel`, { method: 'POST', token });
-
-export const registerForEvent = (token, eventId) =>
-  request(`/events/${eventId}/register`, { method: 'POST', token });
-
-// Notification job queue (admin) — surfaces the RabbitMQ-backed outbox so the
-// dashboard can show what's in flight without needing direct broker access.
-export const getPendingNotificationJobs = (token, limit) =>
-  request(`/notifications/jobs/pending${limit ? `?limit=${limit}` : ''}`, { token });
-
-export const completeNotificationJob = (token, jobId) =>
-  request(`/notifications/jobs/${jobId}/complete`, { method: 'POST', token });
-
-export const retryNotificationJob = (token, jobId) =>
-  request(`/notifications/jobs/${jobId}/retry`, { method: 'POST', token });
+export const getMyEvents = (token) => request('/events/mine', { token });
 
 export { ApiError };
