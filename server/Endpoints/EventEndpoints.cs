@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Poseidon.Server.Auth;
+using Poseidon.Server.Data;
 using Poseidon.Server.Data.Entities;
 using Poseidon.Server.RateLimiting;
 using Poseidon.Server.Services;
@@ -115,6 +117,15 @@ public static class EventEndpoints
             .Produces(StatusCodes.Status404NotFound)
             .ProducesProblem(StatusCodes.Status409Conflict);
 
+        group.MapGet("/{id:guid}/registrations", GetEventRegistrationsAsync)
+            .RequireRole(UserRoles.Teacher, UserRoles.Admin)
+            .WithName("GetEventRegistrations")
+            .WithSummary("List confirmed registrations and the ordered waitlist for an organizer's event")
+            .Produces<EventRegistrationsResponse>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status403Forbidden)
+            .Produces(StatusCodes.Status404NotFound);
+
         return group;
     }
 
@@ -153,33 +164,40 @@ public static class EventEndpoints
 
     private static async Task<Ok<List<EventResponse>>> GetAllAsync(IEventService eventService)
     {
-        List<Event> events = await eventService.GetAllAsync();
+        List<Event> events = await eventService.GetAllAsync(GetUserIdOrNull(user), GetRole(user));
         return TypedResults.Ok(events.Select(MapToResponse).ToList());
     }
 
-    private static async Task<Ok<List<EventResponse>>> GetSortedByStartDateAscAsync(IEventService eventService)
+    private static async Task<Ok<List<EventResponse>>> GetSortedByStartDateAscAsync(
+        ClaimsPrincipal user,
+        IEventService eventService)
     {
-        List<Event> events = await eventService.GetAllSortedAsync(EventListSort.StartDateAscending);
+        List<Event> events = await eventService.GetAllSortedAsync(EventListSort.StartDateAscending, GetUserIdOrNull(user), GetRole(user));
         return TypedResults.Ok(events.Select(MapToResponse).ToList());
     }
 
-    private static async Task<Ok<List<EventResponse>>> GetSortedByStartDateDescAsync(IEventService eventService)
+    private static async Task<Ok<List<EventResponse>>> GetSortedByStartDateDescAsync(
+        ClaimsPrincipal user,
+        IEventService eventService)
     {
-        List<Event> events = await eventService.GetAllSortedAsync(EventListSort.StartDateDescending);
+        List<Event> events = await eventService.GetAllSortedAsync(EventListSort.StartDateDescending, GetUserIdOrNull(user), GetRole(user));
         return TypedResults.Ok(events.Select(MapToResponse).ToList());
     }
 
-    private static async Task<Ok<List<EventResponse>>> GetSortedByTitleAsync(IEventService eventService)
+    private static async Task<Ok<List<EventResponse>>> GetSortedByTitleAsync(
+        ClaimsPrincipal user,
+        IEventService eventService)
     {
-        List<Event> events = await eventService.GetAllSortedAsync(EventListSort.TitleAscending);
+        List<Event> events = await eventService.GetAllSortedAsync(EventListSort.TitleAscending, GetUserIdOrNull(user), GetRole(user));
         return TypedResults.Ok(events.Select(MapToResponse).ToList());
     }
 
     private static async Task<Results<Ok<EventResponse>, NotFound>> GetByIdAsync(
         Guid id,
+        ClaimsPrincipal user,
         IEventService eventService)
     {
-        Event? ev = await eventService.GetByIdAsync(id);
+        Event? ev = await eventService.GetByIdAsync(id, GetUserIdOrNull(user), GetRole(user));
         return ev is null ? TypedResults.NotFound() : TypedResults.Ok(MapToResponse(ev));
     }
 
@@ -254,10 +272,99 @@ public static class EventEndpoints
         };
     }
 
+    private static async Task<Results<Ok<EventRegistrationsResponse>, ForbidHttpResult, NotFound>> GetEventRegistrationsAsync(
+        Guid id,
+        ClaimsPrincipal user,
+        AppDbContext dbContext)
+    {
+        if (!TryGetUserId(user, out Guid organizerId))
+        {
+            return TypedResults.NotFound();
+        }
+
+        Event? ev = await dbContext.Events
+            .AsNoTracking()
+            .FirstOrDefaultAsync(e => e.EventId == id);
+
+        if (ev is null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        if (!IsAdmin(user) && ev.OrganizerId != organizerId)
+        {
+            return TypedResults.Forbid();
+        }
+
+        List<RegistrationRosterItemResponse> confirmed = await dbContext.Registrations
+            .AsNoTracking()
+            .Include(registration => registration.Student)
+            .Where(registration =>
+                registration.EventId == id &&
+                registration.RegistrationStatusId == 1 &&
+                registration.CancelledAt == null)
+            .OrderBy(registration => registration.RegisteredAt)
+            .Select(registration => new RegistrationRosterItemResponse(
+                registration.RegistrationId,
+                registration.StudentId,
+                registration.Student != null ? registration.Student.DisplayName : string.Empty,
+                registration.Student != null ? registration.Student.Email : string.Empty,
+                "Confirmed",
+                null,
+                registration.RegisteredAt))
+            .ToListAsync();
+
+        var waitlistedRegistrations = await dbContext.Registrations
+            .AsNoTracking()
+            .Include(registration => registration.Student)
+            .Where(registration =>
+                registration.EventId == id &&
+                registration.RegistrationStatusId == 2 &&
+                registration.CancelledAt == null)
+            .OrderBy(registration => registration.RegisteredAt)
+            .Select(registration => new
+            {
+                registration.RegistrationId,
+                registration.StudentId,
+                StudentName = registration.Student != null ? registration.Student.DisplayName : string.Empty,
+                StudentEmail = registration.Student != null ? registration.Student.Email : string.Empty,
+                registration.RegisteredAt
+            })
+            .ToListAsync();
+
+        List<RegistrationRosterItemResponse> waitlistRows = waitlistedRegistrations
+            .Select((registration, index) => new RegistrationRosterItemResponse(
+                registration.RegistrationId,
+                registration.StudentId,
+                registration.StudentName,
+                registration.StudentEmail,
+                "Waitlisted",
+                index + 1,
+                registration.RegisteredAt))
+            .ToList();
+
+        return TypedResults.Ok(new EventRegistrationsResponse(
+            id,
+            ev.Capacity,
+            confirmed.Count,
+            waitlistRows.Count,
+            confirmed,
+            waitlistRows));
+    }
+
     private static bool TryGetUserId(ClaimsPrincipal user, out Guid userId)
     {
         return Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out userId);
     }
+
+    private static Guid? GetUserIdOrNull(ClaimsPrincipal user) =>
+        TryGetUserId(user, out Guid userId) ? userId : null;
+
+    private static string GetRole(ClaimsPrincipal user) =>
+        user.FindFirstValue(JwtClaimNames.Role) ?? UserRoles.Student;
+
+    private static bool IsAdmin(ClaimsPrincipal user) =>
+        string.Equals(GetRole(user), UserRoles.Admin, StringComparison.Ordinal);
 
     private static EventDetails ToDetails(CreateEventRequest request) =>
         new(request.Title, request.Description, request.StartsAt, request.EndsAt, request.Capacity, request.LocationText);
@@ -309,4 +416,21 @@ public sealed record RegistrationResponse(
     Guid StudentId,
     int RegistrationStatusId,
     string RegistrationStatus,
+    DateTimeOffset RegisteredAt);
+
+public sealed record EventRegistrationsResponse(
+    Guid EventId,
+    int Capacity,
+    int ConfirmedCount,
+    int WaitlistCount,
+    List<RegistrationRosterItemResponse> Confirmed,
+    List<RegistrationRosterItemResponse> Waitlist);
+
+public sealed record RegistrationRosterItemResponse(
+    Guid RegistrationId,
+    Guid StudentId,
+    string StudentName,
+    string StudentEmail,
+    string RegistrationStatus,
+    int? WaitlistPosition,
     DateTimeOffset RegisteredAt);

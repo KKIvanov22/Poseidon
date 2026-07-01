@@ -139,6 +139,7 @@ app.MapGet("/health/ping", () => Results.Ok(new
 app.MapAuthEndpoints();
 app.MapUserEndpoints();
 app.MapEventEndpoints();
+app.MapRegistrationEndpoints();
 app.MapWaitlistEndpoints(); // Maps the new waitlist retrieval route
 app.MapNotificationJobEndpoints();
 

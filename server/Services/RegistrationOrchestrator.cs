@@ -9,7 +9,7 @@ namespace Poseidon.Server.Services;
 public interface IRegistrationOrchestrator
 {
     Task<(Guid RegistrationId, int StatusId)> RegisterStudentTransactionAsync(Guid eventId, Guid studentId);
-    Task<Guid?> CancelRegistrationTransactionAsync(Guid eventId, Guid studentId);
+    Task<CancelRegistrationTransactionResult> CancelRegistrationTransactionAsync(Guid eventId, Guid studentId);
 }
 
 public sealed class RegistrationOrchestrator(AppDbContext dbContext) : IRegistrationOrchestrator
@@ -88,25 +88,67 @@ public sealed class RegistrationOrchestrator(AppDbContext dbContext) : IRegistra
         }
     }
 
-    public async Task<Guid?> CancelRegistrationTransactionAsync(Guid eventId, Guid studentId)
+    public async Task<CancelRegistrationTransactionResult> CancelRegistrationTransactionAsync(Guid eventId, Guid studentId)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync();
         try
         {
             const string cancelSql = """
-                UPDATE public.registrations
-                SET registration_status_id = 3,
-                    cancelled_at = CURRENT_TIMESTAMP
-                WHERE event_id = {0}
-                  AND student_id = {1}
-                  AND registration_status_id = 1;
+                WITH target AS (
+                    SELECT registration_id, registration_status_id
+                    FROM public.registrations
+                    WHERE event_id = @eventId
+                      AND student_id = @studentId
+                      AND registration_status_id IN (1, 2)
+                      AND cancelled_at IS NULL
+                    FOR UPDATE
+                ),
+                updated AS (
+                    UPDATE public.registrations registration
+                    SET registration_status_id = 3,
+                        cancelled_at = CURRENT_TIMESTAMP
+                    FROM target
+                    WHERE registration.registration_id = target.registration_id
+                    RETURNING registration.registration_id, target.registration_status_id
+                )
+                SELECT registration_id, registration_status_id
+                FROM updated;
                 """;
 
-            int affectedRows = await dbContext.Database.ExecuteSqlRawAsync(cancelSql, eventId, studentId);
-            if (affectedRows == 0)
+            await using var cancelCommand = dbContext.Database.GetDbConnection().CreateCommand();
+            cancelCommand.CommandText = cancelSql;
+            cancelCommand.Transaction = transaction.GetDbTransaction();
+            cancelCommand.Parameters.Add(new NpgsqlParameter("eventId", eventId));
+            cancelCommand.Parameters.Add(new NpgsqlParameter("studentId", studentId));
+
+            await OpenConnectionIfNeededAsync();
+
+            Guid cancelledRegistrationId;
+            int previousStatusId;
+            await using (var cancelReader = await cancelCommand.ExecuteReaderAsync())
             {
-                await transaction.RollbackAsync();
-                return null;
+                if (!await cancelReader.ReadAsync())
+                {
+                    await transaction.RollbackAsync();
+                    return CancelRegistrationTransactionResult.NotFound();
+                }
+
+                cancelledRegistrationId = cancelReader.GetGuid(0);
+                previousStatusId = cancelReader.GetInt32(1);
+            }
+
+            const string cancellationOutboxSql = """
+                INSERT INTO public.notification_jobs (event_id, recipient_user_id, job_status_id, payload, title, message)
+                VALUES ({0}, {1}, 1, CAST({2} AS jsonb), 'Registration Cancelled', 'Your event registration has been cancelled.');
+                """;
+
+            string cancellationPayloadJson = $$"""{"type":"RegistrationCancelled","event_id":"{{eventId}}","student_id":"{{studentId}}","registration_id":"{{cancelledRegistrationId}}","previous_status_id":{{previousStatusId}}}""";
+            await dbContext.Database.ExecuteSqlRawAsync(cancellationOutboxSql, eventId, studentId, cancellationPayloadJson);
+
+            if (previousStatusId != 1)
+            {
+                await transaction.CommitAsync();
+                return CancelRegistrationTransactionResult.Cancelled(cancelledRegistrationId, previousStatusId);
             }
 
             const string promoteSql = """
@@ -135,9 +177,11 @@ public sealed class RegistrationOrchestrator(AppDbContext dbContext) : IRegistra
             await OpenConnectionIfNeededAsync();
 
             Guid? promotedStudentId = null;
+            Guid? promotedRegistrationId = null;
             await using var reader = await command.ExecuteReaderAsync();
             if (await reader.ReadAsync())
             {
+                promotedRegistrationId = reader.GetGuid(0);
                 promotedStudentId = reader.GetGuid(1);
             }
 
@@ -155,7 +199,11 @@ public sealed class RegistrationOrchestrator(AppDbContext dbContext) : IRegistra
             }
 
             await transaction.CommitAsync();
-            return promotedStudentId;
+            return CancelRegistrationTransactionResult.Cancelled(
+                cancelledRegistrationId,
+                previousStatusId,
+                promotedRegistrationId,
+                promotedStudentId);
         }
         catch
         {
@@ -171,4 +219,21 @@ public sealed class RegistrationOrchestrator(AppDbContext dbContext) : IRegistra
             await dbContext.Database.GetDbConnection().OpenAsync();
         }
     }
+}
+
+public sealed record CancelRegistrationTransactionResult(
+    bool WasCancelled,
+    Guid? CancelledRegistrationId = null,
+    int? PreviousStatusId = null,
+    Guid? PromotedRegistrationId = null,
+    Guid? PromotedStudentId = null)
+{
+    public static CancelRegistrationTransactionResult NotFound() => new(false);
+
+    public static CancelRegistrationTransactionResult Cancelled(
+        Guid cancelledRegistrationId,
+        int previousStatusId,
+        Guid? promotedRegistrationId = null,
+        Guid? promotedStudentId = null) =>
+        new(true, cancelledRegistrationId, previousStatusId, promotedRegistrationId, promotedStudentId);
 }
