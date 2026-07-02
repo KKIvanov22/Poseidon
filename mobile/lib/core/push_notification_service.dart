@@ -17,11 +17,12 @@ class PushNotificationService {
   PushNotificationService({
     FirebaseMessaging? messaging,
     FlutterLocalNotificationsPlugin? localNotifications,
-  }) : _messaging = messaging ?? FirebaseMessaging.instance,
-       _localNotifications =
-           localNotifications ?? FlutterLocalNotificationsPlugin();
+  }) : _localNotifications =
+           localNotifications ?? FlutterLocalNotificationsPlugin() {
+    _messaging = messaging;
+  }
 
-  final FirebaseMessaging _messaging;
+  FirebaseMessaging? _messaging;
   final FlutterLocalNotificationsPlugin _localNotifications;
 
   AuthNotifier? _auth;
@@ -43,17 +44,18 @@ class PushNotificationService {
 
     try {
       await Firebase.initializeApp();
+      final messaging = _messaging ??= FirebaseMessaging.instance;
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
       await _configureLocalNotifications();
-      await _messaging.requestPermission();
-      await _messaging.setForegroundNotificationPresentationOptions(
+      await messaging.requestPermission();
+      await messaging.setForegroundNotificationPresentationOptions(
         alert: true,
         badge: true,
         sound: true,
       );
 
       FirebaseMessaging.onMessage.listen(_showForegroundNotification);
-      _messaging.onTokenRefresh.listen(_registerToken);
+      messaging.onTokenRefresh.listen(_registerToken);
       auth.addListener(_syncWithAuth);
       _ready = true;
       await _syncWithAuth();
@@ -91,7 +93,10 @@ class PushNotificationService {
       return;
     }
 
-    final pushToken = await _messaging.getToken();
+    final messaging = _messaging;
+    if (messaging == null) return;
+
+    final pushToken = await messaging.getToken();
     if (pushToken != null) {
       await _registerToken(pushToken);
     }

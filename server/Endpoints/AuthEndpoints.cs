@@ -40,8 +40,8 @@ public static class AuthEndpoints
             .WithDescription("Authenticates a user with email and password and returns a JWT access token.")
             .Accepts<LoginRequest>("application/json")
             .Produces<AuthResponse>(StatusCodes.Status200OK)
-            .Produces(StatusCodes.Status401Unauthorized)
-            .ProducesProblem(StatusCodes.Status400BadRequest);
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized);
 
         group.MapPost("/logout", Logout)
             .RequireAuthorization()
@@ -54,18 +54,27 @@ public static class AuthEndpoints
         return group;
     }
 
-    private static async Task<Results<Created<AuthResponse>, Conflict<ProblemHttpResult>, BadRequest<ProblemHttpResult>>> RegisterAsync(
+    private static async Task<Results<Created<AuthResponse>, ProblemHttpResult>> RegisterAsync(
         RegisterRequest request,
         AppDbContext dbContext,
         IOptions<JwtOptions> jwtOptions)
     {
-        string email = NormalizeEmail(request.Email);
-        if (string.IsNullOrWhiteSpace(email) ||
-            string.IsNullOrWhiteSpace(request.Password) ||
-            string.IsNullOrWhiteSpace(request.DisplayName))
+        if (string.IsNullOrWhiteSpace(request.DisplayName))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("Email, password, and displayName are required."));
+            return ValidationProblem("Display name is required.");
         }
+
+        if (!AuthValidation.IsValidEmail(request.Email))
+        {
+            return ValidationProblem("Enter a valid email address.");
+        }
+
+        if (!AuthValidation.IsValidPassword(request.Password))
+        {
+            return ValidationProblem(AuthValidation.PasswordRequirement);
+        }
+
+        string email = NormalizeEmail(request.Email);
 
         var user = new User
         {
@@ -83,23 +92,29 @@ public static class AuthEndpoints
         }
         catch (DbUpdateException exception) when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
         {
-            return TypedResults.Conflict(TypedResults.Problem("A user with this email already exists."));
+            return ConflictProblem("A user with this email already exists.");
         }
 
         user.Role = await dbContext.UserRoles.FindAsync(user.RoleId);
         return TypedResults.Created($"/users/{user.UserId}", CreateAuthResponse(user, jwtOptions.Value));
     }
 
-    private static async Task<Results<Ok<AuthResponse>, UnauthorizedHttpResult, BadRequest<ProblemHttpResult>>> LoginAsync(
+    private static async Task<Results<Ok<AuthResponse>, UnauthorizedHttpResult, ProblemHttpResult>> LoginAsync(
         LoginRequest request,
         AppDbContext dbContext,
         IOptions<JwtOptions> jwtOptions)
     {
-        string email = NormalizeEmail(request.Email);
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(request.Password))
+        if (!AuthValidation.IsValidEmail(request.Email))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("Email and password are required."));
+            return ValidationProblem("Enter a valid email address.");
         }
+
+        if (string.IsNullOrWhiteSpace(request.Password))
+        {
+            return ValidationProblem("Password is required.");
+        }
+
+        string email = NormalizeEmail(request.Email);
 
         User? user = await dbContext.Users
             .Include(user => user.Role)
@@ -116,6 +131,22 @@ public static class AuthEndpoints
     private static Ok<LogoutResponse> Logout()
     {
         return TypedResults.Ok(new LogoutResponse("Logged out. Discard the bearer token on the client."));
+    }
+
+    private static ProblemHttpResult ValidationProblem(string detail)
+    {
+        return TypedResults.Problem(
+            title: "Invalid request.",
+            detail: detail,
+            statusCode: StatusCodes.Status400BadRequest);
+    }
+
+    private static ProblemHttpResult ConflictProblem(string detail)
+    {
+        return TypedResults.Problem(
+            title: "Conflict.",
+            detail: detail,
+            statusCode: StatusCodes.Status409Conflict);
     }
 
     private static AuthResponse CreateAuthResponse(User user, JwtOptions options)
