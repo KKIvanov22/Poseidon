@@ -17,7 +17,13 @@ services:
       Cors__AllowedOrigins__2: ${CORS_ORIGIN_2:-}
       Firebase__CloudMessaging__Enabled: ${FIREBASE_CLOUD_MESSAGING_ENABLED:-false}
       Firebase__CloudMessaging__ProjectId: ${FIREBASE_CLOUD_MESSAGING_PROJECT_ID:-}
+      Firebase__CloudMessaging__CredentialJson: ${FIREBASE_CLOUD_MESSAGING_CREDENTIAL_JSON:-}
       Firebase__CloudMessaging__CredentialPath: ${FIREBASE_CLOUD_MESSAGING_CREDENTIAL_PATH:-}
+      Firebase__CloudMessaging__PrivateKeyId: ${FIREBASE_CLOUD_MESSAGING_PRIVATE_KEY_ID:-}
+      Firebase__CloudMessaging__PrivateKey: ${FIREBASE_CLOUD_MESSAGING_PRIVATE_KEY:-}
+      Firebase__CloudMessaging__ClientEmail: ${FIREBASE_CLOUD_MESSAGING_CLIENT_EMAIL:-}
+      Firebase__CloudMessaging__ClientId: ${FIREBASE_CLOUD_MESSAGING_CLIENT_ID:-}
+      Firebase__CloudMessaging__ClientX509CertUrl: ${FIREBASE_CLOUD_MESSAGING_CLIENT_X509_CERT_URL:-}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health/ping"]
       interval: 10s

@@ -24,6 +24,7 @@ packages/
 .env
 .env.*
 !.env.example
+server/*key*.json
 
 # OS files
 Thumbs.db
