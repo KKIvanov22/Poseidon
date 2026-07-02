@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Net;
 using System.Net.Mail;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
@@ -58,7 +59,12 @@ builder.Services
     {
         Host = builder.Configuration["Smtp:Host"] ?? "localhost",
         Port = builder.Configuration.GetValue("Smtp:Port", 1025),
-        EnableSsl = builder.Configuration.GetValue("Smtp:EnableSsl", false)
+        EnableSsl = builder.Configuration.GetValue("Smtp:EnableSsl", false),
+        Credentials = string.IsNullOrWhiteSpace(builder.Configuration["Smtp:UserName"])
+            ? null
+            : new NetworkCredential(
+                builder.Configuration["Smtp:UserName"],
+                builder.Configuration["Smtp:Password"])
     });
 builder.Services.AddNotificationMessaging(builder.Configuration, builder.Environment);
 builder.Services.AddJwtAuthentication(builder.Configuration);

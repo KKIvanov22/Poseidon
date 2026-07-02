@@ -65,6 +65,7 @@ public static class UserEndpoints
         {
             return TypedResults.NotFound();
         }
+        
 
         UserResponse? user = await QueryUserResponse(dbContext, userId);
         return user is null ? TypedResults.NotFound() : TypedResults.Ok(user);
