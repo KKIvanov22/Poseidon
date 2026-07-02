@@ -42,11 +42,7 @@ export default function UserProfilePage() {
       return;
     }
 
-    if (form.newPassword.length < 8) {
-      setError('New password must be at least 8 characters long.');
-      setStatus('idle');
-      return;
-    }
+    // no minimum length enforced for passwords; allow server to handle policy
 
     if (form.newPassword !== form.confirmPassword) {
       setError('New password and confirmation do not match.');
@@ -141,7 +137,7 @@ export default function UserProfilePage() {
             )}
 
             {error && (
-              <div className="flex items-start gap-2 rounded-xl border border-accent-200 bg-accent-50 px-3 py-2.5 text-sm text-accent-700">
+              <div className={`flex items-start gap-2 rounded-xl px-3 py-2.5 text-sm ${isDark ? 'border-accent-600 bg-slate-800 text-accent-200' : 'border-accent-200 bg-accent-50 text-accent-700'}`}>
                 <FiAlertCircle className="mt-0.5 shrink-0" />
                 <span>{error}</span>
               </div>

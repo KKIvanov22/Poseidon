@@ -22,6 +22,13 @@ export default function SignUp() {
     event.preventDefault();
     setError('');
 
+    // basic client-side email validation
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRe.test(email)) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+
     if (password !== confirmPassword) {
       setError("Passwords don't match.");
       return;
@@ -157,7 +164,10 @@ export default function SignUp() {
             </div>
 
             {error && (
-              <p role="alert" className="rounded-lg border border-accent-100 bg-accent-50 px-3 py-2 text-sm font-semibold text-accent-600">
+              <p
+                role="alert"
+                className={`rounded-lg px-3 py-2 text-sm font-semibold ${isDark ? 'border-accent-600 bg-slate-800 text-accent-200' : 'border-accent-100 bg-accent-50 text-accent-600'}`}
+              >
                 {error}
               </p>
             )}

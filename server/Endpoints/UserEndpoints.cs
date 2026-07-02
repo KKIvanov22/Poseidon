@@ -132,7 +132,7 @@ public static class UserEndpoints
         return Guid.TryParse(user.FindFirstValue(ClaimTypes.NameIdentifier), out userId);
     }
 
-    private static async Task<Results<NoContent, BadRequest<ProblemHttpResult>, NotFound>> ChangePasswordAsync(
+    private static async Task<Results<NoContent, ProblemHttpResult, NotFound>> ChangePasswordAsync(
         ClaimsPrincipal principal,
         ChangePasswordRequest request,
         AppDbContext dbContext)
@@ -145,13 +145,10 @@ public static class UserEndpoints
         if (string.IsNullOrWhiteSpace(request.CurrentPassword) ||
             string.IsNullOrWhiteSpace(request.NewPassword))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("Current password and new password are required."));
+            return TypedResults.Problem(detail: "Current password and new password are required.");
         }
 
-        if (request.NewPassword.Length < 8)
-        {
-            return TypedResults.BadRequest(TypedResults.Problem("New password must be at least 8 characters long."));
-        }
+        // no minimum password length enforced here; allow any length
 
         User? user = await dbContext.Users.SingleOrDefaultAsync(user => user.UserId == userId);
         if (user is null)
@@ -161,7 +158,7 @@ public static class UserEndpoints
 
         if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("Current password is incorrect."));
+            return TypedResults.Problem(detail: "Current password is incorrect.");
         }
 
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
@@ -170,7 +167,7 @@ public static class UserEndpoints
         return TypedResults.NoContent();
     }
 
-    private static async Task<Results<Ok<UserResponse>, BadRequest<ProblemHttpResult>, NotFound>> ChangeRoleAsync(
+    private static async Task<Results<Ok<UserResponse>, ProblemHttpResult, NotFound>> ChangeRoleAsync(
         Guid userId,
         ChangeUserRoleRequest request,
         AppDbContext dbContext)
@@ -178,7 +175,7 @@ public static class UserEndpoints
         string requestedRole = NormalizeRoleName(request.Role);
         if (requestedRole is not (UserRoles.Student or UserRoles.Teacher))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("Role must be Student, Teacher, or Organizer."));
+            return TypedResults.Problem(detail: "Role must be Student, Teacher, or Organizer.");
         }
 
         var user = await dbContext.Users
@@ -192,7 +189,7 @@ public static class UserEndpoints
 
         if (string.Equals(user.Role?.RoleName, UserRoles.Admin, StringComparison.Ordinal))
         {
-            return TypedResults.BadRequest(TypedResults.Problem("Admin accounts cannot be changed by this endpoint."));
+            return TypedResults.Problem(detail: "Admin accounts cannot be changed by this endpoint.");
         }
 
         if (string.Equals(user.Role?.RoleName, requestedRole, StringComparison.Ordinal))
@@ -205,7 +202,7 @@ public static class UserEndpoints
 
         if (role is null)
         {
-            return TypedResults.BadRequest(TypedResults.Problem("The requested role is not configured."));
+            return TypedResults.Problem(detail: "The requested role is not configured.");
         }
 
         user.RoleId = role.RoleId;
