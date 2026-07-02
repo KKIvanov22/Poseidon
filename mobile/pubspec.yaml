@@ -1,0 +1,41 @@
+name: poseidon
+description: "Poseidon Events — mobile client for the Poseidon event management system."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Networking
+  http: ^1.2.1
+
+  # Routing
+  go_router: ^14.2.7
+
+  # Secure token storage (Keychain on iOS, EncryptedSharedPreferences on Android)
+  flutter_secure_storage: ^9.2.2
+
+  # Date formatting
+  intl: ^0.19.0
+
+  # Google Fonts (Inter)
+  google_fonts: ^6.2.1
+
+  # Android push notifications
+  firebase_core: ^3.8.0
+  firebase_messaging: ^15.1.6
+  flutter_local_notifications: ^18.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

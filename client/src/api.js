@@ -60,11 +60,26 @@ export const getMyEvents = (token) => request('/events/mine', { token });
 export const createEvent = (token, event) =>
   request('/events', { method: 'POST', token, body: event });
 
+export const updateEvent = (token, eventId, event) =>
+  request(`/events/${eventId}`, { method: 'PUT', token, body: event });
+
 export const publishEvent = (token, eventId) =>
   request(`/events/${eventId}/publish`, { method: 'POST', token });
 
+export const cancelEvent = (token, eventId) =>
+  request(`/events/${eventId}/cancel`, { method: 'POST', token });
+
 export const registerForEvent = (token, eventId) =>
   request(`/events/${eventId}/register`, { method: 'POST', token });
+
+export const getEventRegistrations = (token, eventId) =>
+  request(`/events/${eventId}/registrations`, { token });
+
+// Registrations
+export const getMyRegistrations = (token) => request('/registrations/me', { token });
+
+export const cancelRegistration = (token, registrationId) =>
+  request(`/registrations/${registrationId}`, { method: 'DELETE', token });
 
 // Users
 export const getCurrentUser = (token) => request('/users/me', { token });

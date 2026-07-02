@@ -105,6 +105,16 @@ public static class EventEndpoints
             .Produces(StatusCodes.Status403Forbidden)
             .Produces(StatusCodes.Status404NotFound);
 
+        group.MapPost("/{id:guid}/close", CloseAsync)
+            .RequireRole(UserRoles.Teacher, UserRoles.Admin)
+            .WithName("CloseEvent")
+            .WithSummary("Close a published event and notify active registrations")
+            .Produces<EventResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status401Unauthorized)
+            .Produces(StatusCodes.Status403Forbidden)
+            .Produces(StatusCodes.Status404NotFound);
+
         // BE12: POST /events/{id}/register
         group.MapPost("/{id:guid}/register", RegisterAsync)
             .RequireRole(UserRoles.Student)
@@ -246,6 +256,20 @@ public static class EventEndpoints
         }
 
         EventOperationResult<Event> result = await eventService.CancelAsync(id, organizerId);
+        return ToEventMutationHttpResult(result);
+    }
+
+    private static async Task<Results<Ok<EventResponse>, BadRequest<ProblemHttpResult>, ForbidHttpResult, NotFound>> CloseAsync(
+        Guid id,
+        ClaimsPrincipal user,
+        IEventService eventService)
+    {
+        if (!TryGetUserId(user, out Guid organizerId))
+        {
+            return TypedResults.BadRequest(TypedResults.Problem("Invalid user claim data."));
+        }
+
+        EventOperationResult<Event> result = await eventService.CloseAsync(id, organizerId, IsAdmin(user));
         return ToEventMutationHttpResult(result);
     }
 

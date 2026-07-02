@@ -7,13 +7,19 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 {
     public DbSet<User> Users => Set<User>();
     public DbSet<UserRole> UserRoles => Set<UserRole>();
-    public DbSet<Event> Events => Set<Event>(); 
+    public DbSet<EventStatus> EventStatuses => Set<EventStatus>();
+    public DbSet<RegistrationStatus> RegistrationStatuses => Set<RegistrationStatus>();
+    public DbSet<NotificationJobStatus> NotificationJobStatuses => Set<NotificationJobStatus>();
+    public DbSet<Event> Events => Set<Event>();
     public DbSet<Registration> Registrations => Set<Registration>();
     public DbSet<NotificationJob> NotificationJobs => Set<NotificationJob>();
     public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
+    public DbSet<PushDeviceToken> PushDeviceTokens => Set<PushDeviceToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.HasPostgresExtension("pgcrypto");
+
         modelBuilder.Entity<User>(entity =>
         {
             entity.ToTable("users", "public");
@@ -22,7 +28,7 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(user => user.UserId)
                 .HasColumnName("user_id")
                 .HasDefaultValueSql("gen_random_uuid()");
-                
+
             entity.Property(user => user.Email).HasColumnName("email").HasMaxLength(255).IsRequired();
             entity.Property(user => user.PasswordHash).HasColumnName("password_hash").HasMaxLength(255).IsRequired();
             entity.Property(user => user.DisplayName).HasColumnName("display_name").HasMaxLength(100).IsRequired();
@@ -32,6 +38,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
             entity.HasIndex(user => user.RoleId).HasDatabaseName("ix_users_role");
+            entity.HasIndex(user => user.Email)
+                .IsUnique()
+                .HasDatabaseName("ux_users_email");
 
             entity.HasOne(user => user.Role)
                 .WithMany(role => role.Users)
@@ -48,16 +57,75 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(role => role.RoleName).HasColumnName("role_name").HasMaxLength(30).IsRequired();
 
             entity.HasIndex(role => role.RoleName).IsUnique();
+
+            entity.HasData(
+                new UserRole { RoleId = 1, RoleName = "Student" },
+                new UserRole { RoleId = 2, RoleName = "Teacher" },
+                new UserRole { RoleId = 3, RoleName = "Admin" });
+        });
+
+        modelBuilder.Entity<EventStatus>(entity =>
+        {
+            entity.ToTable("event_statuses", "public");
+            entity.HasKey(status => status.EventStatusId);
+
+            entity.Property(status => status.EventStatusId).HasColumnName("event_status_id");
+            entity.Property(status => status.StatusName).HasColumnName("status_name").HasMaxLength(30).IsRequired();
+
+            entity.HasIndex(status => status.StatusName).IsUnique();
+
+            entity.HasData(
+                new EventStatus { EventStatusId = 1, StatusName = "Draft" },
+                new EventStatus { EventStatusId = 2, StatusName = "Published" },
+                new EventStatus { EventStatusId = 3, StatusName = "Cancelled" },
+                new EventStatus { EventStatusId = 4, StatusName = "Completed" });
+        });
+
+        modelBuilder.Entity<RegistrationStatus>(entity =>
+        {
+            entity.ToTable("registration_statuses", "public");
+            entity.HasKey(status => status.RegistrationStatusId);
+
+            entity.Property(status => status.RegistrationStatusId).HasColumnName("registration_status_id");
+            entity.Property(status => status.StatusName).HasColumnName("status_name").HasMaxLength(30).IsRequired();
+
+            entity.HasIndex(status => status.StatusName).IsUnique();
+
+            entity.HasData(
+                new RegistrationStatus { RegistrationStatusId = 1, StatusName = "Confirmed" },
+                new RegistrationStatus { RegistrationStatusId = 2, StatusName = "Waitlisted" },
+                new RegistrationStatus { RegistrationStatusId = 3, StatusName = "Cancelled" });
+        });
+
+        modelBuilder.Entity<NotificationJobStatus>(entity =>
+        {
+            entity.ToTable("notification_job_statuses", "public");
+            entity.HasKey(status => status.JobStatusId);
+
+            entity.Property(status => status.JobStatusId).HasColumnName("job_status_id");
+            entity.Property(status => status.StatusName).HasColumnName("status_name").HasMaxLength(30).IsRequired();
+
+            entity.HasIndex(status => status.StatusName).IsUnique();
+
+            entity.HasData(
+                new NotificationJobStatus { JobStatusId = 1, StatusName = "Pending" },
+                new NotificationJobStatus { JobStatusId = 2, StatusName = "Processing" },
+                new NotificationJobStatus { JobStatusId = 3, StatusName = "Succeeded" },
+                new NotificationJobStatus { JobStatusId = 4, StatusName = "Failed" });
         });
 
         modelBuilder.Entity<Event>(entity =>
         {
-            entity.ToTable("events", "public");
+            entity.ToTable("events", "public", table =>
+            {
+                table.HasCheckConstraint("ck_events_capacity", "capacity >= 1");
+                table.HasCheckConstraint("ck_events_time", "ends_at > starts_at");
+            });
             entity.HasKey(e => e.EventId);
 
             entity.Property(e => e.EventId).HasColumnName("event_id").HasDefaultValueSql("gen_random_uuid()");
             entity.Property(e => e.OrganizerId).HasColumnName("organizer_id");
-            entity.Property(e => e.EventStatusId).HasColumnName("event_status_id").HasDefaultValue(1); 
+            entity.Property(e => e.EventStatusId).HasColumnName("event_status_id").HasDefaultValue(1);
             entity.Property(e => e.Title).HasColumnName("title").HasMaxLength(150).IsRequired();
             entity.Property(e => e.Description).HasColumnName("description");
             entity.Property(e => e.StartsAt).HasColumnName("starts_at").IsRequired();
@@ -67,9 +135,19 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.Property(e => e.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
 
+            entity.HasIndex(e => e.OrganizerId).HasDatabaseName("ix_events_organizer");
+            entity.HasIndex(e => e.EventStatusId).HasDatabaseName("ix_events_status");
+            entity.HasIndex(e => e.StartsAt).HasDatabaseName("ix_events_starts_at");
+            entity.HasIndex(e => new { e.StartsAt, e.EndsAt }).HasDatabaseName("ix_events_date_range");
+
             entity.HasOne(e => e.Organizer)
                 .WithMany()
                 .HasForeignKey(e => e.OrganizerId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.EventStatus)
+                .WithMany(status => status.Events)
+                .HasForeignKey(e => e.EventStatusId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -91,6 +169,13 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
 
             entity.HasIndex(registration => new { registration.EventId, registration.RegistrationStatusId, registration.RegisteredAt })
                 .HasDatabaseName("ix_registrations_waitlist_order");
+            entity.HasIndex(registration => new { registration.EventId, registration.StudentId })
+                .IsUnique()
+                .HasFilter("cancelled_at IS NULL")
+                .HasDatabaseName("ux_registrations_one_active");
+            entity.HasIndex(registration => new { registration.EventId, registration.RegistrationStatusId })
+                .HasFilter("cancelled_at IS NULL")
+                .HasDatabaseName("ix_registrations_confirmed");
 
             entity.HasOne(registration => registration.Event)
                 .WithMany()
@@ -101,11 +186,20 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .WithMany()
                 .HasForeignKey(registration => registration.StudentId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(registration => registration.RegistrationStatus)
+                .WithMany(status => status.Registrations)
+                .HasForeignKey(registration => registration.RegistrationStatusId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<NotificationJob>(entity =>
         {
-            entity.ToTable("notification_jobs", "public");
+            entity.ToTable("notification_jobs", "public", table =>
+            {
+                table.HasCheckConstraint("ck_notification_jobs_attempts", "attempts >= 0");
+                table.HasCheckConstraint("ck_notification_jobs_channel", "channel IN ('Email')");
+            });
             entity.HasKey(job => job.NotificationJobId);
 
             entity.Property(job => job.NotificationJobId)
@@ -129,6 +223,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             entity.HasIndex(job => new { job.EventId }).HasDatabaseName("ix_notification_jobs_event");
             entity.HasIndex(job => new { job.RecipientUserId }).HasDatabaseName("ix_notification_jobs_recipient");
             entity.HasIndex(job => new { job.JobStatusId, job.AvailableAt }).HasDatabaseName("ix_notification_jobs_status_available");
+            entity.HasIndex(job => new { job.JobStatusId, job.AvailableAt, job.PublisherLockedUntil })
+                .HasFilter("published_at IS NULL")
+                .HasDatabaseName("ix_notification_jobs_publishable");
+            entity.HasIndex(job => job.Payload)
+                .HasMethod("gin")
+                .HasDatabaseName("ix_notification_jobs_payload");
 
             entity.HasOne(job => job.Event)
                 .WithMany()
@@ -139,11 +239,20 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .WithMany()
                 .HasForeignKey(job => job.RecipientUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(job => job.JobStatus)
+                .WithMany(status => status.NotificationJobs)
+                .HasForeignKey(job => job.JobStatusId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<NotificationDelivery>(entity =>
         {
-            entity.ToTable("notification_deliveries", "public");
+            entity.ToTable("notification_deliveries", "public", table =>
+            {
+                table.HasCheckConstraint("ck_notification_deliveries_channel", "channel IN ('Email')");
+                table.HasCheckConstraint("ck_notification_deliveries_result", "result IN ('Succeeded', 'Failed')");
+            });
             entity.HasKey(delivery => delivery.NotificationDeliveryId);
 
             entity.Property(delivery => delivery.NotificationDeliveryId)
@@ -172,6 +281,38 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
                 .WithMany()
                 .HasForeignKey(delivery => delivery.RecipientUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<PushDeviceToken>(entity =>
+        {
+            entity.ToTable("push_device_tokens", "public", table =>
+            {
+                table.HasCheckConstraint("ck_push_device_tokens_platform", "platform IN ('Android')");
+            });
+
+            entity.HasKey(token => token.PushDeviceTokenId);
+            entity.Property(token => token.PushDeviceTokenId)
+                .HasColumnName("push_device_token_id")
+                .HasDefaultValueSql("gen_random_uuid()");
+            entity.Property(token => token.UserId).HasColumnName("user_id");
+            entity.Property(token => token.Token).HasColumnName("token").HasMaxLength(512).IsRequired();
+            entity.Property(token => token.Platform).HasColumnName("platform").HasMaxLength(30).HasDefaultValue("Android").IsRequired();
+            entity.Property(token => token.DeviceId).HasColumnName("device_id").HasMaxLength(100);
+            entity.Property(token => token.CreatedAt).HasColumnName("created_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(token => token.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(token => token.LastSeenAt).HasColumnName("last_seen_at").HasDefaultValueSql("CURRENT_TIMESTAMP");
+            entity.Property(token => token.RevokedAt).HasColumnName("revoked_at");
+
+            entity.HasIndex(token => token.Token)
+                .IsUnique()
+                .HasDatabaseName("ux_push_device_tokens_token");
+            entity.HasIndex(token => new { token.UserId, token.RevokedAt })
+                .HasDatabaseName("ix_push_device_tokens_user_active");
+
+            entity.HasOne(token => token.User)
+                .WithMany()
+                .HasForeignKey(token => token.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

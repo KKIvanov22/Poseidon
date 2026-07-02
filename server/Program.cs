@@ -4,6 +4,7 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
+using Npgsql;
 using Poseidon.Server.Data;
 using Poseidon.Server.Endpoints;
 using Poseidon.Server.RateLimiting;
@@ -11,6 +12,9 @@ using Poseidon.Server.Services;
 using Poseidon.Server.Services.Notifications;
 
 var builder = WebApplication.CreateBuilder(args);
+LoadDotEnvIntoEnvironment(builder.Environment.ContentRootPath);
+builder.Configuration.AddEnvironmentVariables();
+builder.Configuration.AddInMemoryCollection(BuildEnvironmentConfigurationAliases());
 
 const string ClientCorsPolicy = "ClientCorsPolicy";
 
@@ -97,6 +101,9 @@ builder.Services.AddCors(options =>
     string[] allowedOrigins = builder.Configuration
         .GetSection("Cors:AllowedOrigins")
         .Get<string[]>() ?? ["http://localhost:3000"];
+    allowedOrigins = allowedOrigins
+        .Where(origin => !string.IsNullOrWhiteSpace(origin))
+        .ToArray();
 
     options.AddPolicy(ClientCorsPolicy, policy =>
     {
@@ -140,6 +147,7 @@ app.MapEventEndpoints();
 app.MapRegistrationEndpoints();
 app.MapWaitlistEndpoints(); // Maps the new waitlist retrieval route
 app.MapNotificationJobEndpoints();
+app.MapPushDeviceTokenEndpoints();
 
 app.Run();
 
@@ -153,3 +161,233 @@ static string GetRateLimitPartitionKey(HttpContext httpContext)
 
     return $"ip:{httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
 }
+
+static void LoadDotEnvIntoEnvironment(string contentRootPath)
+{
+    string envPath = Path.Combine(contentRootPath, ".env");
+    if (!File.Exists(envPath))
+    {
+        return;
+    }
+
+    foreach (string line in File.ReadLines(envPath))
+    {
+        string trimmed = line.Trim();
+        if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+        {
+            continue;
+        }
+
+        int separatorIndex = trimmed.IndexOf('=');
+        if (separatorIndex <= 0)
+        {
+            continue;
+        }
+
+        string key = trimmed[..separatorIndex].Trim();
+        string value = trimmed[(separatorIndex + 1)..].Trim();
+        value = UnquoteEnvValue(value);
+
+        if (string.IsNullOrWhiteSpace(key) ||
+            Environment.GetEnvironmentVariable(key) is not null)
+        {
+            continue;
+        }
+
+        Environment.SetEnvironmentVariable(key, value);
+    }
+}
+
+static Dictionary<string, string?> BuildEnvironmentConfigurationAliases()
+{
+    var aliases = new Dictionary<string, string?>();
+
+    AddAlias(aliases, "RabbitMq:HostName", "RABBITMQ_HOST");
+    AddAlias(aliases, "RabbitMq:Port", "RABBITMQ_PORT");
+    AddAlias(aliases, "RabbitMq:UserName", "RABBITMQ_USERNAME", "RABBITMQ_USER");
+    AddAlias(aliases, "RabbitMq:Password", "RABBITMQ_PASSWORD");
+    AddAlias(aliases, "RabbitMq:VirtualHost", "RABBITMQ_VHOST", "RABBITMQ_VIRTUAL_HOST");
+    AddAlias(aliases, "RabbitMq:RequireTls", "RABBITMQ_REQUIRE_TLS", "RABBITMQ_TLS");
+    AddAlias(aliases, "RabbitMq:TlsServerName", "RABBITMQ_TLS_SERVER_NAME");
+    AddAlias(aliases, "Firebase:CloudMessaging:Enabled", "FIREBASE_CLOUD_MESSAGING_ENABLED");
+    AddAlias(aliases, "Firebase:CloudMessaging:ProjectId", "FIREBASE_CLOUD_MESSAGING_PROJECT_ID");
+    AddAlias(aliases, "Firebase:CloudMessaging:CredentialPath", "FIREBASE_CLOUD_MESSAGING_CREDENTIAL_PATH");
+    AddAlias(aliases, "Firebase:CloudMessaging:CredentialJson", "FIREBASE_CLOUD_MESSAGING_CREDENTIAL_JSON");
+    AddAlias(aliases, "Firebase:CloudMessaging:PrivateKeyId", "FIREBASE_CLOUD_MESSAGING_PRIVATE_KEY_ID");
+    AddAlias(aliases, "Firebase:CloudMessaging:PrivateKey", "FIREBASE_CLOUD_MESSAGING_PRIVATE_KEY");
+    AddAlias(aliases, "Firebase:CloudMessaging:ClientEmail", "FIREBASE_CLOUD_MESSAGING_CLIENT_EMAIL");
+    AddAlias(aliases, "Firebase:CloudMessaging:ClientId", "FIREBASE_CLOUD_MESSAGING_CLIENT_ID");
+    AddAlias(aliases, "Firebase:CloudMessaging:ClientX509CertUrl", "FIREBASE_CLOUD_MESSAGING_CLIENT_X509_CERT_URL");
+
+    string? rabbitMqPort = Environment.GetEnvironmentVariable("RABBITMQ_PORT");
+    if (!aliases.ContainsKey("RabbitMq:RequireTls") &&
+        string.Equals(rabbitMqPort, "5671", StringComparison.Ordinal))
+    {
+        aliases["RabbitMq:RequireTls"] = "true";
+    }
+
+    if (Environment.GetEnvironmentVariable("ConnectionStrings__Default") is null)
+    {
+        string? connectionString = Environment.GetEnvironmentVariable("DATABASE_URL");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            connectionString = BuildPostgresConnectionString();
+        }
+        else
+        {
+            connectionString = NormalizeDatabaseConnectionString(connectionString);
+        }
+
+        if (!string.IsNullOrWhiteSpace(connectionString))
+        {
+            aliases["ConnectionStrings:Default"] = connectionString;
+        }
+    }
+
+    return aliases;
+}
+
+static void AddAlias(
+    IDictionary<string, string?> aliases,
+    string configurationKey,
+    params string[] environmentKeys)
+{
+    foreach (string environmentKey in environmentKeys)
+    {
+        string? value = Environment.GetEnvironmentVariable(environmentKey);
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            aliases[configurationKey] = value;
+            return;
+        }
+    }
+}
+
+static string? BuildPostgresConnectionString()
+{
+    string host = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost";
+    string port = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5432";
+    string database = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "poseidon";
+    string? username = Environment.GetEnvironmentVariable("POSTGRES_APP_USER");
+    string? password = Environment.GetEnvironmentVariable("POSTGRES_APP_PASSWORD");
+    string? sslMode = Environment.GetEnvironmentVariable("POSTGRES_SSL_MODE") ??
+        Environment.GetEnvironmentVariable("PGSSLMODE");
+    string? trustServerCertificate = Environment.GetEnvironmentVariable("POSTGRES_TRUST_SERVER_CERTIFICATE");
+
+    if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+    {
+        return null;
+    }
+
+    var builder = new NpgsqlConnectionStringBuilder
+    {
+        Host = host,
+        Port = int.TryParse(port, out int parsedPort) ? parsedPort : 5432,
+        Database = database,
+        Username = username,
+        Password = password
+    };
+
+    ApplyOptionalPostgresSetting(builder, "Ssl Mode", sslMode);
+    ApplyOptionalPostgresSetting(builder, "Trust Server Certificate", trustServerCertificate);
+
+    return builder.ConnectionString;
+}
+
+static string NormalizeDatabaseConnectionString(string connectionString)
+{
+    string trimmed = connectionString.Trim();
+
+    if (!Uri.TryCreate(trimmed, UriKind.Absolute, out Uri? uri) ||
+        !IsPostgresUrlScheme(uri.Scheme))
+    {
+        return trimmed;
+    }
+
+    var builder = new NpgsqlConnectionStringBuilder
+    {
+        Host = uri.Host,
+        Port = uri.Port > 0 ? uri.Port : 5432,
+        Database = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/'))
+    };
+
+    if (!string.IsNullOrWhiteSpace(uri.UserInfo))
+    {
+        string[] credentials = uri.UserInfo.Split(':', 2);
+        builder.Username = Uri.UnescapeDataString(credentials[0]);
+
+        if (credentials.Length > 1)
+        {
+            builder.Password = Uri.UnescapeDataString(credentials[1]);
+        }
+    }
+
+    IReadOnlyDictionary<string, string> query = ParseDatabaseUrlQuery(uri.Query);
+    if (query.TryGetValue("sslmode", out string? sslMode))
+    {
+        ApplyOptionalPostgresSetting(builder, "Ssl Mode", sslMode);
+    }
+
+    if (query.TryGetValue("trustservercertificate", out string? trustServerCertificate))
+    {
+        ApplyOptionalPostgresSetting(builder, "Trust Server Certificate", trustServerCertificate);
+    }
+
+    return builder.ConnectionString;
+}
+
+static bool IsPostgresUrlScheme(string scheme) =>
+    string.Equals(scheme, "postgres", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(scheme, "postgresql", StringComparison.OrdinalIgnoreCase);
+
+static void ApplyOptionalPostgresSetting(
+    NpgsqlConnectionStringBuilder builder,
+    string key,
+    string? value)
+{
+    if (!string.IsNullOrWhiteSpace(value))
+    {
+        builder[key] = value;
+    }
+}
+
+static IReadOnlyDictionary<string, string> ParseDatabaseUrlQuery(string query)
+{
+    var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    string trimmed = query.TrimStart('?');
+    if (string.IsNullOrWhiteSpace(trimmed))
+    {
+        return values;
+    }
+
+    foreach (string pair in trimmed.Split('&', StringSplitOptions.RemoveEmptyEntries))
+    {
+        string[] parts = pair.Split('=', 2);
+        string key = Uri.UnescapeDataString(parts[0].Replace("+", " "));
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            continue;
+        }
+
+        string value = parts.Length > 1
+            ? Uri.UnescapeDataString(parts[1].Replace("+", " "))
+            : string.Empty;
+        values[key] = value;
+    }
+
+    return values;
+}
+
+static string UnquoteEnvValue(string value)
+{
+    if (value.Length >= 2 &&
+        ((value[0] == '"' && value[^1] == '"') ||
+        (value[0] == '\'' && value[^1] == '\'')))
+    {
+        return value[1..^1];
+    }
+
+    return value;
+}
+
+public partial class Program;

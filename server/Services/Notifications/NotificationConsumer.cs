@@ -90,6 +90,13 @@ public sealed class NotificationConsumer(
                 return;
             }
 
+            if (await SuccessfulDeliveryExistsAsync(message.NotificationJobId, cancellationToken))
+            {
+                await MarkAlreadySucceededAsync(message, cancellationToken);
+                channel.BasicAck(eventArgs.DeliveryTag, multiple: false);
+                return;
+            }
+
             EmailNotification notification = await CreateEmailNotificationAsync(message, cancellationToken);
             await emailSender.SendAsync(notification, cancellationToken);
             await MarkSucceededAsync(message, cancellationToken);
@@ -143,6 +150,42 @@ public sealed class NotificationConsumer(
         return await command.ExecuteScalarAsync(cancellationToken) is not null;
     }
 
+    private async Task<bool> SuccessfulDeliveryExistsAsync(Guid notificationJobId, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM public.notification_deliveries
+                WHERE notification_job_id = @notificationJobId
+                  AND result = 'Succeeded'
+            );
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("notificationJobId", notificationJobId);
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    private async Task MarkAlreadySucceededAsync(NotificationMessage message, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE public.notification_jobs
+            SET job_status_id = 3,
+                processed_at = COALESCE(processed_at, CURRENT_TIMESTAMP),
+                publisher_locked_until = NULL,
+                last_error = NULL
+            WHERE notification_job_id = @notificationJobId;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("notificationJobId", message.NotificationJobId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private async Task<EmailNotification> CreateEmailNotificationAsync(
         NotificationMessage message,
         CancellationToken cancellationToken)
@@ -166,6 +209,7 @@ public sealed class NotificationConsumer(
 
         return new EmailNotification(
             message.NotificationJobId,
+            message.EventId,
             message.RecipientUserId,
             recipientEmail,
             message.Title,

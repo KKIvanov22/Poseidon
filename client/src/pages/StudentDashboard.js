@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FiAlertCircle, FiCheck, FiInbox, FiRefreshCw, FiSearch } from 'react-icons/fi';
-import { getEvents, registerForEvent } from '../api';
+import { FiAlertCircle, FiCheck, FiClock, FiInbox, FiRefreshCw, FiSearch, FiX } from 'react-icons/fi';
+import { cancelRegistration, getEvents, getMyRegistrations, registerForEvent } from '../api';
 import { useAuth } from '../auth/AuthContext';
 import { useApiError } from '../auth/useApiError';
 import DashboardLayout from '../components/DashboardLayout';
@@ -18,14 +18,19 @@ export default function StudentDashboard() {
   const [search, setSearch] = useState('');
   const [now, setNow] = useState(new Date());
   const [registeringId, setRegisteringId] = useState(null);
-  const [registeredIds, setRegisteredIds] = useState(new Set());
+  const [registrations, setRegistrations] = useState([]);
+  const [cancellingId, setCancellingId] = useState(null);
   const [registerErrors, setRegisterErrors] = useState({});
 
   const loadEvents = useCallback(async () => {
     setStatus('loading');
     try {
-      const data = await getEvents(token);
+      const [data, registrationData] = await Promise.all([
+        getEvents(token),
+        getMyRegistrations(token),
+      ]);
       setEvents(data.filter((e) => e.eventStatusId === 2));
+      setRegistrations(registrationData);
       setStatus('ready');
     } catch (err) {
       if (handleApiError(err)) return;
@@ -52,8 +57,23 @@ export default function StudentDashboard() {
     });
 
     try {
-      await registerForEvent(token, eventId);
-      setRegisteredIds((prev) => new Set(prev).add(eventId));
+      const registration = await registerForEvent(token, eventId);
+      setRegistrations((prev) => [
+        {
+          registrationId: registration.registrationId,
+          eventId: registration.eventId,
+          eventTitle: events.find((event) => event.eventId === eventId)?.title || '',
+          registrationStatus: registration.registrationStatus,
+          waitlistPosition: null,
+          registeredAt: registration.registeredAt,
+          cancelledAt: null,
+        },
+        ...prev.filter(
+          (item) => !(item.eventId === eventId && item.cancelledAt === null)
+        ),
+      ]);
+      const latestRegistrations = await getMyRegistrations(token);
+      setRegistrations(latestRegistrations);
     } catch (err) {
       if (handleApiError(err)) return;
       setRegisterErrors((prev) => ({
@@ -62,6 +82,41 @@ export default function StudentDashboard() {
       }));
     } finally {
       setRegisteringId(null);
+    }
+  };
+
+  const handleCancelRegistration = async (registrationId) => {
+    setCancellingId(registrationId);
+    setRegisterErrors({});
+
+    try {
+      const result = await cancelRegistration(token, registrationId);
+      setRegistrations((prev) =>
+        prev.map((registration) =>
+          registration.registrationId === registrationId
+            ? {
+                ...registration,
+                registrationStatus: 'Cancelled',
+                cancelledAt: new Date().toISOString(),
+              }
+            : registration
+        )
+      );
+      if (result?.promotedRegistrationId) {
+        const latestRegistrations = await getMyRegistrations(token);
+        setRegistrations(latestRegistrations);
+      }
+    } catch (err) {
+      if (handleApiError(err)) return;
+      const eventId = registrations.find((item) => item.registrationId === registrationId)?.eventId;
+      if (eventId) {
+        setRegisterErrors((prev) => ({
+          ...prev,
+          [eventId]: err.message || 'Cancellation failed.',
+        }));
+      }
+    } finally {
+      setCancellingId(null);
     }
   };
 
@@ -76,6 +131,13 @@ export default function StudentDashboard() {
   }, [events, search]);
 
   const firstName = user?.displayName?.split(' ')[0];
+  const activeRegistrationByEventId = useMemo(() => {
+    const map = new Map();
+    registrations
+      .filter((registration) => registration.cancelledAt === null)
+      .forEach((registration) => map.set(registration.eventId, registration));
+    return map;
+  }, [registrations]);
 
   return (
     <DashboardLayout
@@ -149,9 +211,10 @@ export default function StudentDashboard() {
       {status === 'ready' && filteredEvents.length > 0 && (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {filteredEvents.map((event, i) => {
-            const isRegistered = registeredIds.has(event.eventId);
+            const activeRegistration = activeRegistrationByEventId.get(event.eventId);
             const canRegister = isEventRegisterable(event, now);
             const isRegistering = registeringId === event.eventId;
+            const isCancelling = activeRegistration && cancellingId === activeRegistration.registrationId;
             const registerError = registerErrors[event.eventId];
 
             return (
@@ -165,9 +228,29 @@ export default function StudentDashboard() {
                     {registerError && (
                       <p className="text-xs font-medium text-accent-600">{registerError}</p>
                     )}
-                    {isRegistered ? (
-                      <div className="flex items-center justify-center gap-2 rounded-lg bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-700">
-                        <FiCheck /> Registered
+                    {activeRegistration ? (
+                      <div className="space-y-2">
+                        <div
+                          className={`flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold ${
+                            activeRegistration.registrationStatus === 'Waitlisted'
+                              ? 'bg-amber-50 text-amber-700'
+                              : 'bg-emerald-50 text-emerald-700'
+                          }`}
+                        >
+                          {activeRegistration.registrationStatus === 'Waitlisted' ? <FiClock /> : <FiCheck />}
+                          {activeRegistration.registrationStatus === 'Waitlisted'
+                            ? `Waitlisted${activeRegistration.waitlistPosition ? ` #${activeRegistration.waitlistPosition}` : ''}`
+                            : 'Registered'}
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isCancelling}
+                          onClick={() => handleCancelRegistration(activeRegistration.registrationId)}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-accent-400 hover:text-accent-600 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <FiX />
+                          {isCancelling ? 'Cancelling...' : 'Cancel registration'}
+                        </button>
                       </div>
                     ) : (
                       <button

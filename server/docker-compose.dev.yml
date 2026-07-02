@@ -1,0 +1,97 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: poseidon-server:dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    ports:
+      - "${API_PORT:-8080}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=${POSTGRES_DB:-poseidon};Username=${POSTGRES_APP_USER:-poseidon_app};Password=${POSTGRES_APP_PASSWORD:-poseidon_app_dev_password}
+      RabbitMq__HostName: rabbitmq
+      RabbitMq__Port: 5672
+      RabbitMq__UserName: ${RABBITMQ_DEFAULT_USER:-poseidon}
+      RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS:-poseidon_dev_password}
+      RabbitMq__VirtualHost: /
+      Smtp__Host: mailpit
+      Smtp__Port: 1025
+      Smtp__EnableSsl: "false"
+      Smtp__FromEmail: no-reply@poseidon.com
+      Smtp__FromName: Poseidon Events System
+      Cors__AllowedOrigins__0: ${CORS_ORIGIN_0:-http://localhost:3000}
+      Cors__AllowedOrigins__1: ${CORS_ORIGIN_1:-http://localhost:3001}
+      Cors__AllowedOrigins__2: ${CORS_ORIGIN_2:-}
+      Firebase__CloudMessaging__Enabled: ${FIREBASE_CLOUD_MESSAGING_ENABLED:-false}
+      Firebase__CloudMessaging__ProjectId: ${FIREBASE_CLOUD_MESSAGING_PROJECT_ID:-}
+      Firebase__CloudMessaging__CredentialJson: ${FIREBASE_CLOUD_MESSAGING_CREDENTIAL_JSON:-}
+      Firebase__CloudMessaging__CredentialPath: ${FIREBASE_CLOUD_MESSAGING_CREDENTIAL_PATH:-}
+      Firebase__CloudMessaging__PrivateKeyId: ${FIREBASE_CLOUD_MESSAGING_PRIVATE_KEY_ID:-}
+      Firebase__CloudMessaging__PrivateKey: ${FIREBASE_CLOUD_MESSAGING_PRIVATE_KEY:-}
+      Firebase__CloudMessaging__ClientEmail: ${FIREBASE_CLOUD_MESSAGING_CLIENT_EMAIL:-}
+      Firebase__CloudMessaging__ClientId: ${FIREBASE_CLOUD_MESSAGING_CLIENT_ID:-}
+      Firebase__CloudMessaging__ClientX509CertUrl: ${FIREBASE_CLOUD_MESSAGING_CLIENT_X509_CERT_URL:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-poseidon}
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER:-poseidon_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-poseidon_admin_dev_password}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-poseidon_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-poseidon_app_dev_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init/01-create-app-user.sh:/docker-entrypoint-initdb.d/01-create-app-user.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-poseidon}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-poseidon_dev_password}
+    ports:
+      - "${RABBITMQ_DEV_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_WEB_PORT:-8025}:8025"
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

@@ -11,4 +11,5 @@ public sealed class Registration
 
     public Event? Event { get; set; }
     public User? Student { get; set; }
+    public RegistrationStatus? RegistrationStatus { get; set; }
 }

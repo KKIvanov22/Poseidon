@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { FiArrowRight, FiLock, FiMail, FiUser, FiUserPlus } from 'react-icons/fi';
 import { register, ApiError } from './api';
 import { useAuth } from './auth/AuthContext';
+import { isValidEmail, isValidPassword, PASSWORD_REQUIREMENT } from './lib/authValidation';
 import { getDashboardPath } from './lib/roles';
 import { useTheme } from './theme/ThemeContext';
 
@@ -22,10 +23,18 @@ export default function SignUp() {
     event.preventDefault();
     setError('');
 
-    // basic client-side email validation
-    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRe.test(email)) {
-      setError('Please enter a valid email address.');
+    if (!name.trim()) {
+      setError('Full name is required.');
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      setError('Enter a valid email address.');
+      return;
+    }
+
+    if (!isValidPassword(password)) {
+      setError(PASSWORD_REQUIREMENT);
       return;
     }
 
@@ -36,7 +45,7 @@ export default function SignUp() {
 
     setSubmitting(true);
     try {
-      const auth = await register(email, password, name);
+      const auth = await register(email.trim(), password, name.trim());
       const session = saveSession(auth);
       navigate(getDashboardPath(session.user.role), { replace: true });
     } catch (err) {

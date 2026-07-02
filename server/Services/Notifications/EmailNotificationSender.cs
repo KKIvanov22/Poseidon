@@ -10,6 +10,7 @@ public interface IEmailNotificationSender
 
 public sealed class SmtpEmailNotificationSender(
     IServiceScopeFactory scopeFactory,
+    IPushNotificationSender pushNotificationSender,
     ILogger<SmtpEmailNotificationSender> logger) : IEmailNotificationSender
 {
     public async Task SendAsync(EmailNotification notification, CancellationToken cancellationToken)
@@ -40,5 +41,25 @@ public sealed class SmtpEmailNotificationSender(
             "Email notification {NotificationJobId} sent to {RecipientEmail}.",
             notification.NotificationJobId,
             notification.RecipientEmail);
+
+        try
+        {
+            await pushNotificationSender.SendAsync(
+                new PushNotification(
+                    notification.NotificationJobId,
+                    notification.EventId,
+                    notification.RecipientUserId,
+                    notification.Title,
+                    notification.Message,
+                    notification.PayloadJson),
+                cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Push fan-out failed after email notification {NotificationJobId} was sent.",
+                notification.NotificationJobId);
+        }
     }
 }
