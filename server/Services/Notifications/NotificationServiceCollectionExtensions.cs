@@ -39,7 +39,19 @@ public static class NotificationServiceCollectionExtensions
                 "RabbitMq production configuration must enable TLS unless the broker host is local or private.")
             .ValidateOnStart();
 
-        services.AddSingleton<IEmailNotificationSender, SmtpEmailNotificationSender>();
+        if (!string.IsNullOrWhiteSpace(configuration["Brevo:ApiKey"]))
+        {
+            services.AddHttpClient("BrevoEmail", client =>
+            {
+                client.BaseAddress = new Uri(configuration["Brevo:BaseUrl"] ?? "https://api.brevo.com");
+                client.Timeout = TimeSpan.FromSeconds(30);
+            });
+            services.AddSingleton<IEmailNotificationSender, BrevoEmailNotificationSender>();
+        }
+        else
+        {
+            services.AddSingleton<IEmailNotificationSender, SmtpEmailNotificationSender>();
+        }
         services
             .AddOptions<FirebaseCloudMessagingOptions>()
             .Bind(configuration.GetSection(FirebaseCloudMessagingOptions.SectionName))
