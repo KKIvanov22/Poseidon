@@ -52,6 +52,24 @@ public sealed class NotificationJobProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_PayloadForDifferentRecipient_ReturnsUnsupportedTypeAndDoesNotSendEmail()
+    {
+        await using SqliteTestDatabase database = await SqliteTestDatabase.CreateAsync();
+        NotificationJob job = SeedNotificationJob(
+            database.DbContext,
+            payload: $$"""{"type":"RegistrationConfirmed","event_id":"{{Guid.NewGuid()}}","student_id":"{{Guid.NewGuid()}}"}""");
+        await database.DbContext.SaveChangesAsync();
+        var sender = new FakeEmailNotificationSender();
+        var processor = new NotificationJobProcessor(database.DbContext, sender);
+
+        NotificationJobProcessResult result = await processor.ProcessAsync(job.NotificationJobId);
+
+        Assert.Equal(NotificationJobProcessStatus.UnsupportedType, result.Status);
+        Assert.Empty(sender.Sent);
+        Assert.Empty(await database.DbContext.NotificationDeliveries.ToListAsync());
+    }
+
+    [Fact]
     public async Task ProcessAsync_ValidPendingJob_SendsEmailMarksSucceededAndAddsDelivery()
     {
         await using SqliteTestDatabase database = await SqliteTestDatabase.CreateAsync();
@@ -73,6 +91,71 @@ public sealed class NotificationJobProcessorTests
         Assert.Null(savedJob.LastError);
         Assert.Equal("Succeeded", delivery.Result);
         Assert.Equal(job.NotificationJobId, delivery.NotificationJobId);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_ValidPendingJobWithExistingSuccessDelivery_DoesNotAddDuplicateSuccessDelivery()
+    {
+        await using SqliteTestDatabase database = await SqliteTestDatabase.CreateAsync();
+        NotificationJob job = SeedNotificationJob(database.DbContext);
+        database.DbContext.NotificationDeliveries.Add(new NotificationDelivery
+        {
+            NotificationDeliveryId = Guid.NewGuid(),
+            NotificationJobId = job.NotificationJobId,
+            RecipientUserId = job.RecipientUserId,
+            Channel = "Email",
+            Result = "Succeeded"
+        });
+        await database.DbContext.SaveChangesAsync();
+        var processor = new NotificationJobProcessor(database.DbContext, new FakeEmailNotificationSender());
+
+        NotificationJobProcessResult result = await processor.ProcessAsync(job.NotificationJobId);
+
+        Assert.Equal(NotificationJobProcessStatus.Succeeded, result.Status);
+        Assert.Equal(1, await database.DbContext.NotificationDeliveries.CountAsync(d => d.Result == "Succeeded"));
+    }
+
+    [Fact]
+    public async Task ProcessAsync_MissingRecipientEmail_RequeuesJobAndRecordsFailedDelivery()
+    {
+        await using SqliteTestDatabase database = await SqliteTestDatabase.CreateAsync();
+        NotificationJob job = SeedNotificationJob(database.DbContext, recipientEmail: " ");
+        await database.DbContext.SaveChangesAsync();
+        var sender = new FakeEmailNotificationSender();
+        var processor = new NotificationJobProcessor(database.DbContext, sender);
+
+        NotificationJobProcessResult result = await processor.ProcessAsync(job.NotificationJobId);
+
+        NotificationJob savedJob = await database.DbContext.NotificationJobs.SingleAsync();
+        NotificationDelivery delivery = await database.DbContext.NotificationDeliveries.SingleAsync();
+        Assert.Equal(NotificationJobProcessStatus.Failed, result.Status);
+        Assert.Equal(1, savedJob.JobStatusId);
+        Assert.Equal(1, savedJob.Attempts);
+        Assert.Null(savedJob.PublisherLockedUntil);
+        Assert.Equal("Recipient email was not found.", savedJob.LastError);
+        Assert.Equal("Failed", delivery.Result);
+        Assert.Empty(sender.Sent);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_EmailSenderThrowsBeforeMaxAttempts_RequeuesJobForRetry()
+    {
+        await using SqliteTestDatabase database = await SqliteTestDatabase.CreateAsync();
+        NotificationJob job = SeedNotificationJob(database.DbContext);
+        await database.DbContext.SaveChangesAsync();
+        var processor = new NotificationJobProcessor(
+            database.DbContext,
+            new FakeEmailNotificationSender(new InvalidOperationException("temporary outage")));
+
+        NotificationJobProcessResult result = await processor.ProcessAsync(job.NotificationJobId, maxAttempts: 3);
+
+        NotificationJob savedJob = await database.DbContext.NotificationJobs.SingleAsync();
+        Assert.Equal(NotificationJobProcessStatus.Failed, result.Status);
+        Assert.Equal(1, savedJob.JobStatusId);
+        Assert.Equal(1, savedJob.Attempts);
+        Assert.Null(savedJob.PublisherLockedUntil);
+        Assert.Null(savedJob.ProcessedAt);
+        Assert.Equal("temporary outage", savedJob.LastError);
     }
 
     [Fact]
@@ -98,11 +181,32 @@ public sealed class NotificationJobProcessorTests
         Assert.Equal("Failed", delivery.Result);
     }
 
+    [Fact]
+    public async Task ProcessAsync_MaxAttemptsBelowOne_IsClampedAndFailsAfterFirstAttempt()
+    {
+        await using SqliteTestDatabase database = await SqliteTestDatabase.CreateAsync();
+        NotificationJob job = SeedNotificationJob(database.DbContext);
+        await database.DbContext.SaveChangesAsync();
+        var processor = new NotificationJobProcessor(
+            database.DbContext,
+            new FakeEmailNotificationSender(new InvalidOperationException("permanent failure")));
+
+        NotificationJobProcessResult result = await processor.ProcessAsync(job.NotificationJobId, maxAttempts: 0);
+
+        NotificationJob savedJob = await database.DbContext.NotificationJobs.SingleAsync();
+        Assert.Equal(NotificationJobProcessStatus.Failed, result.Status);
+        Assert.Equal(4, savedJob.JobStatusId);
+        Assert.Equal(1, savedJob.Attempts);
+        Assert.NotNull(savedJob.ProcessedAt);
+        Assert.Equal("permanent failure", savedJob.LastError);
+    }
+
     private static NotificationJob SeedNotificationJob(
         AppDbContext dbContext,
         int jobStatusId = 1,
         int attempts = 0,
-        string? payload = null)
+        string? payload = null,
+        string recipientEmail = "student@example.com")
     {
         Guid eventId = Guid.NewGuid();
         Guid recipientUserId = Guid.NewGuid();
@@ -117,7 +221,7 @@ public sealed class NotificationJobProcessorTests
         var recipient = new User
         {
             UserId = recipientUserId,
-            Email = "student@example.com",
+            Email = recipientEmail,
             PasswordHash = "hash",
             DisplayName = "Student",
             RoleId = 1
