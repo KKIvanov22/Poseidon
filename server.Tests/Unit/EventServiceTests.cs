@@ -45,6 +45,21 @@ public sealed class EventServiceTests
     }
 
     [Fact]
+    public async Task CreateAsync_CapacityBelowOne_ReturnsBadRequestAndDoesNotPersist()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        EventOperationResult<Event> result = await service.CreateAsync(
+            Guid.NewGuid(),
+            ValidDetails(capacity: 0));
+
+        Assert.Equal(EventOperationStatus.BadRequest, result.Status);
+        Assert.Equal("Capacity must contain at least 1 seat.", result.Problem);
+        Assert.Empty(await dbContext.Events.ToListAsync());
+    }
+
+    [Fact]
     public async Task UpdateAsync_DifferentOrganizer_ReturnsForbiddenAndLeavesEventUnchanged()
     {
         await using AppDbContext dbContext = CreateInMemoryDbContext();
@@ -75,9 +90,47 @@ public sealed class EventServiceTests
             Guid.NewGuid(),
             isAdmin: true);
 
+
         Assert.Equal(EventOperationStatus.Success, result.Status);
         Assert.Equal(2, result.Value!.EventStatusId);
         Assert.NotNull(result.Value.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task GetAllSortedAsync_StudentSeesOnlyPublishedEvents()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        AddEvent(dbContext, Guid.NewGuid(), "Draft", statusId: 1);
+        Event published = AddEvent(dbContext, Guid.NewGuid(), "Published", statusId: 2);
+        AddEvent(dbContext, Guid.NewGuid(), "Completed", statusId: 4);
+        await dbContext.SaveChangesAsync();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        List<Event> events = await service.GetAllSortedAsync(
+            EventListSort.StartDateDescending,
+            Guid.NewGuid(),
+            "Student");
+
+        Event onlyEvent = Assert.Single(events);
+        Assert.Equal(published.EventId, onlyEvent.EventId);
+    }
+
+    [Fact]
+    public async Task GetAllSortedAsync_AdminSeesAllEventsSortedByTitle()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        Event beta = AddEvent(dbContext, Guid.NewGuid(), "Beta", statusId: 2);
+        Event alpha = AddEvent(dbContext, Guid.NewGuid(), "Alpha", statusId: 1);
+        Event gamma = AddEvent(dbContext, Guid.NewGuid(), "Gamma", statusId: 3);
+        await dbContext.SaveChangesAsync();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        List<Event> events = await service.GetAllSortedAsync(
+            EventListSort.TitleAscending,
+            Guid.NewGuid(),
+            "Admin");
+
+        Assert.Equal([alpha.EventId, beta.EventId, gamma.EventId], events.Select(e => e.EventId).ToArray());
     }
 
     [Fact]
