@@ -4,6 +4,7 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
+using Npgsql;
 using Poseidon.Server.Data;
 using Poseidon.Server.Endpoints;
 using Poseidon.Server.RateLimiting;
@@ -232,6 +233,10 @@ static Dictionary<string, string?> BuildEnvironmentConfigurationAliases()
         {
             connectionString = BuildPostgresConnectionString();
         }
+        else
+        {
+            connectionString = NormalizeDatabaseConnectionString(connectionString);
+        }
 
         if (!string.IsNullOrWhiteSpace(connectionString))
         {
@@ -265,13 +270,112 @@ static string? BuildPostgresConnectionString()
     string database = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "poseidon";
     string? username = Environment.GetEnvironmentVariable("POSTGRES_APP_USER");
     string? password = Environment.GetEnvironmentVariable("POSTGRES_APP_PASSWORD");
+    string? sslMode = Environment.GetEnvironmentVariable("POSTGRES_SSL_MODE") ??
+        Environment.GetEnvironmentVariable("PGSSLMODE");
+    string? trustServerCertificate = Environment.GetEnvironmentVariable("POSTGRES_TRUST_SERVER_CERTIFICATE");
 
     if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
     {
         return null;
     }
 
-    return $"Host={host};Port={port};Database={database};Username={username};Password={password}";
+    var builder = new NpgsqlConnectionStringBuilder
+    {
+        Host = host,
+        Port = int.TryParse(port, out int parsedPort) ? parsedPort : 5432,
+        Database = database,
+        Username = username,
+        Password = password
+    };
+
+    ApplyOptionalPostgresSetting(builder, "Ssl Mode", sslMode);
+    ApplyOptionalPostgresSetting(builder, "Trust Server Certificate", trustServerCertificate);
+
+    return builder.ConnectionString;
+}
+
+static string NormalizeDatabaseConnectionString(string connectionString)
+{
+    string trimmed = connectionString.Trim();
+
+    if (!Uri.TryCreate(trimmed, UriKind.Absolute, out Uri? uri) ||
+        !IsPostgresUrlScheme(uri.Scheme))
+    {
+        return trimmed;
+    }
+
+    var builder = new NpgsqlConnectionStringBuilder
+    {
+        Host = uri.Host,
+        Port = uri.Port > 0 ? uri.Port : 5432,
+        Database = Uri.UnescapeDataString(uri.AbsolutePath.TrimStart('/'))
+    };
+
+    if (!string.IsNullOrWhiteSpace(uri.UserInfo))
+    {
+        string[] credentials = uri.UserInfo.Split(':', 2);
+        builder.Username = Uri.UnescapeDataString(credentials[0]);
+
+        if (credentials.Length > 1)
+        {
+            builder.Password = Uri.UnescapeDataString(credentials[1]);
+        }
+    }
+
+    IReadOnlyDictionary<string, string> query = ParseDatabaseUrlQuery(uri.Query);
+    if (query.TryGetValue("sslmode", out string? sslMode))
+    {
+        ApplyOptionalPostgresSetting(builder, "Ssl Mode", sslMode);
+    }
+
+    if (query.TryGetValue("trustservercertificate", out string? trustServerCertificate))
+    {
+        ApplyOptionalPostgresSetting(builder, "Trust Server Certificate", trustServerCertificate);
+    }
+
+    return builder.ConnectionString;
+}
+
+static bool IsPostgresUrlScheme(string scheme) =>
+    string.Equals(scheme, "postgres", StringComparison.OrdinalIgnoreCase) ||
+    string.Equals(scheme, "postgresql", StringComparison.OrdinalIgnoreCase);
+
+static void ApplyOptionalPostgresSetting(
+    NpgsqlConnectionStringBuilder builder,
+    string key,
+    string? value)
+{
+    if (!string.IsNullOrWhiteSpace(value))
+    {
+        builder[key] = value;
+    }
+}
+
+static IReadOnlyDictionary<string, string> ParseDatabaseUrlQuery(string query)
+{
+    var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    string trimmed = query.TrimStart('?');
+    if (string.IsNullOrWhiteSpace(trimmed))
+    {
+        return values;
+    }
+
+    foreach (string pair in trimmed.Split('&', StringSplitOptions.RemoveEmptyEntries))
+    {
+        string[] parts = pair.Split('=', 2);
+        string key = Uri.UnescapeDataString(parts[0].Replace("+", " "));
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            continue;
+        }
+
+        string value = parts.Length > 1
+            ? Uri.UnescapeDataString(parts[1].Replace("+", " "))
+            : string.Empty;
+        values[key] = value;
+    }
+
+    return values;
 }
 
 static string UnquoteEnvValue(string value)

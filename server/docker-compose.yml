@@ -12,6 +12,13 @@ services:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       ASPNETCORE_URLS: http://+:8080
       POSTGRES_HOST: ${POSTGRES_HOST:-host.docker.internal}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-poseidon}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-poseidon_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-poseidon_app_dev_password}
+      POSTGRES_SSL_MODE: ${POSTGRES_SSL_MODE:-Prefer}
+      POSTGRES_TRUST_SERVER_CERTIFICATE: ${POSTGRES_TRUST_SERVER_CERTIFICATE:-false}
+      DATABASE_URL: ${DATABASE_URL:-}
       Cors__AllowedOrigins__0: ${CORS_ORIGIN_0:-http://localhost:3000}
       Cors__AllowedOrigins__1: ${CORS_ORIGIN_1:-http://localhost:3001}
       Cors__AllowedOrigins__2: ${CORS_ORIGIN_2:-}
