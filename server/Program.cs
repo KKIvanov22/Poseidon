@@ -208,6 +208,15 @@ static Dictionary<string, string?> BuildEnvironmentConfigurationAliases()
     AddAlias(aliases, "RabbitMq:VirtualHost", "RABBITMQ_VHOST", "RABBITMQ_VIRTUAL_HOST");
     AddAlias(aliases, "RabbitMq:RequireTls", "RABBITMQ_REQUIRE_TLS", "RABBITMQ_TLS");
     AddAlias(aliases, "RabbitMq:TlsServerName", "RABBITMQ_TLS_SERVER_NAME");
+    AddAlias(aliases, "Firebase:CloudMessaging:Enabled", "FIREBASE_CLOUD_MESSAGING_ENABLED");
+    AddAlias(aliases, "Firebase:CloudMessaging:ProjectId", "FIREBASE_CLOUD_MESSAGING_PROJECT_ID");
+    AddAlias(aliases, "Firebase:CloudMessaging:CredentialPath", "FIREBASE_CLOUD_MESSAGING_CREDENTIAL_PATH");
+    AddAlias(aliases, "Firebase:CloudMessaging:CredentialJson", "FIREBASE_CLOUD_MESSAGING_CREDENTIAL_JSON");
+    AddAlias(aliases, "Firebase:CloudMessaging:PrivateKeyId", "FIREBASE_CLOUD_MESSAGING_PRIVATE_KEY_ID");
+    AddAlias(aliases, "Firebase:CloudMessaging:PrivateKey", "FIREBASE_CLOUD_MESSAGING_PRIVATE_KEY");
+    AddAlias(aliases, "Firebase:CloudMessaging:ClientEmail", "FIREBASE_CLOUD_MESSAGING_CLIENT_EMAIL");
+    AddAlias(aliases, "Firebase:CloudMessaging:ClientId", "FIREBASE_CLOUD_MESSAGING_CLIENT_ID");
+    AddAlias(aliases, "Firebase:CloudMessaging:ClientX509CertUrl", "FIREBASE_CLOUD_MESSAGING_CLIENT_X509_CERT_URL");
 
     string? rabbitMqPort = Environment.GetEnvironmentVariable("RABBITMQ_PORT");
     if (!aliases.ContainsKey("RabbitMq:RequireTls") &&

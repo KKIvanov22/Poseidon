@@ -45,9 +45,12 @@ public static class NotificationServiceCollectionExtensions
             .Bind(configuration.GetSection(FirebaseCloudMessagingOptions.SectionName))
             .Validate(options =>
                 !options.Enabled ||
+                !string.IsNullOrWhiteSpace(options.CredentialJson) ||
+                !string.IsNullOrWhiteSpace(options.ClientEmail) &&
+                !string.IsNullOrWhiteSpace(options.PrivateKey) ||
                 !string.IsNullOrWhiteSpace(options.CredentialPath) ||
                 !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS")),
-                "Firebase:CloudMessaging requires CredentialPath or GOOGLE_APPLICATION_CREDENTIALS when enabled.")
+                "Firebase:CloudMessaging requires CredentialJson, ClientEmail and PrivateKey, CredentialPath, or GOOGLE_APPLICATION_CREDENTIALS when enabled.")
             .ValidateOnStart();
 
         FirebaseCloudMessagingOptions firebaseOptions = configuration

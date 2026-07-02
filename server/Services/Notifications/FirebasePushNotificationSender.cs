@@ -4,6 +4,7 @@ using Google.Apis.Auth.OAuth2;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Poseidon.Server.Data;
+using System.Text.Json;
 
 namespace Poseidon.Server.Services.Notifications;
 
@@ -100,9 +101,7 @@ public sealed class FirebasePushNotificationSender(
 
     private static FirebaseMessaging CreateMessagingClient(FirebaseCloudMessagingOptions options)
     {
-        GoogleCredential credential = string.IsNullOrWhiteSpace(options.CredentialPath)
-            ? GoogleCredential.GetApplicationDefault()
-            : GoogleCredential.FromFile(options.CredentialPath);
+        GoogleCredential credential = CreateCredential(options);
 
         AppOptions appOptions = new()
         {
@@ -112,6 +111,41 @@ public sealed class FirebasePushNotificationSender(
 
         FirebaseApp app = FirebaseApp.DefaultInstance ?? FirebaseApp.Create(appOptions);
         return FirebaseMessaging.GetMessaging(app);
+    }
+
+    private static GoogleCredential CreateCredential(FirebaseCloudMessagingOptions options)
+    {
+        if (!string.IsNullOrWhiteSpace(options.CredentialJson))
+        {
+            return GoogleCredential.FromJson(options.CredentialJson);
+        }
+
+        if (!string.IsNullOrWhiteSpace(options.ClientEmail) &&
+            !string.IsNullOrWhiteSpace(options.PrivateKey))
+        {
+            string privateKey = options.PrivateKey.Replace("\\n", "\n", StringComparison.Ordinal);
+            string projectId = options.ProjectId ?? string.Empty;
+            var serviceAccount = new Dictionary<string, string>
+            {
+                ["type"] = "service_account",
+                ["project_id"] = projectId,
+                ["private_key_id"] = options.PrivateKeyId ?? string.Empty,
+                ["private_key"] = privateKey,
+                ["client_email"] = options.ClientEmail,
+                ["client_id"] = options.ClientId ?? string.Empty,
+                ["auth_uri"] = "https://accounts.google.com/o/oauth2/auth",
+                ["token_uri"] = "https://oauth2.googleapis.com/token",
+                ["auth_provider_x509_cert_url"] = "https://www.googleapis.com/oauth2/v1/certs",
+                ["client_x509_cert_url"] = options.ClientX509CertUrl ?? string.Empty,
+                ["universe_domain"] = "googleapis.com"
+            };
+
+            return GoogleCredential.FromJson(JsonSerializer.Serialize(serviceAccount));
+        }
+
+        return string.IsNullOrWhiteSpace(options.CredentialPath)
+            ? GoogleCredential.GetApplicationDefault()
+            : GoogleCredential.FromFile(options.CredentialPath);
     }
 }
 
@@ -130,4 +164,10 @@ public sealed class FirebaseCloudMessagingOptions
     public bool Enabled { get; init; }
     public string? ProjectId { get; init; }
     public string? CredentialPath { get; init; }
+    public string? CredentialJson { get; init; }
+    public string? PrivateKeyId { get; init; }
+    public string? PrivateKey { get; init; }
+    public string? ClientEmail { get; init; }
+    public string? ClientId { get; init; }
+    public string? ClientX509CertUrl { get; init; }
 }
