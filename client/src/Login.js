@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { FiArrowRight, FiLock, FiLogIn, FiMail } from 'react-icons/fi';
 import { login, ApiError } from './api';
 import { useAuth } from './auth/AuthContext';
+import { isValidEmail } from './lib/authValidation';
 import { getDashboardPath } from './lib/roles';
 
 export default function Login() {
@@ -17,9 +18,20 @@ export default function Login() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
+
+    if (!isValidEmail(email)) {
+      setError('Enter a valid email address.');
+      return;
+    }
+
+    if (!password) {
+      setError('Password is required.');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const auth = await login(email, password);
+      const auth = await login(email.trim(), password);
       const session = saveSession(auth);
       navigate(getDashboardPath(session.user.role), { replace: true });
     } catch (err) {
