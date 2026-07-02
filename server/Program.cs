@@ -11,6 +11,9 @@ using Poseidon.Server.Services;
 using Poseidon.Server.Services.Notifications;
 
 var builder = WebApplication.CreateBuilder(args);
+LoadDotEnvIntoEnvironment(builder.Environment.ContentRootPath);
+builder.Configuration.AddEnvironmentVariables();
+builder.Configuration.AddInMemoryCollection(BuildEnvironmentConfigurationAliases());
 
 const string ClientCorsPolicy = "ClientCorsPolicy";
 
@@ -156,6 +159,122 @@ static string GetRateLimitPartitionKey(HttpContext httpContext)
     }
 
     return $"ip:{httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+}
+
+static void LoadDotEnvIntoEnvironment(string contentRootPath)
+{
+    string envPath = Path.Combine(contentRootPath, ".env");
+    if (!File.Exists(envPath))
+    {
+        return;
+    }
+
+    foreach (string line in File.ReadLines(envPath))
+    {
+        string trimmed = line.Trim();
+        if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+        {
+            continue;
+        }
+
+        int separatorIndex = trimmed.IndexOf('=');
+        if (separatorIndex <= 0)
+        {
+            continue;
+        }
+
+        string key = trimmed[..separatorIndex].Trim();
+        string value = trimmed[(separatorIndex + 1)..].Trim();
+        value = UnquoteEnvValue(value);
+
+        if (string.IsNullOrWhiteSpace(key) ||
+            Environment.GetEnvironmentVariable(key) is not null)
+        {
+            continue;
+        }
+
+        Environment.SetEnvironmentVariable(key, value);
+    }
+}
+
+static Dictionary<string, string?> BuildEnvironmentConfigurationAliases()
+{
+    var aliases = new Dictionary<string, string?>();
+
+    AddAlias(aliases, "RabbitMq:HostName", "RABBITMQ_HOST");
+    AddAlias(aliases, "RabbitMq:Port", "RABBITMQ_PORT");
+    AddAlias(aliases, "RabbitMq:UserName", "RABBITMQ_USERNAME", "RABBITMQ_USER");
+    AddAlias(aliases, "RabbitMq:Password", "RABBITMQ_PASSWORD");
+    AddAlias(aliases, "RabbitMq:VirtualHost", "RABBITMQ_VHOST", "RABBITMQ_VIRTUAL_HOST");
+    AddAlias(aliases, "RabbitMq:RequireTls", "RABBITMQ_REQUIRE_TLS", "RABBITMQ_TLS");
+    AddAlias(aliases, "RabbitMq:TlsServerName", "RABBITMQ_TLS_SERVER_NAME");
+
+    string? rabbitMqPort = Environment.GetEnvironmentVariable("RABBITMQ_PORT");
+    if (!aliases.ContainsKey("RabbitMq:RequireTls") &&
+        string.Equals(rabbitMqPort, "5671", StringComparison.Ordinal))
+    {
+        aliases["RabbitMq:RequireTls"] = "true";
+    }
+
+    if (Environment.GetEnvironmentVariable("ConnectionStrings__Default") is null)
+    {
+        string? connectionString = Environment.GetEnvironmentVariable("DATABASE_URL");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            connectionString = BuildPostgresConnectionString();
+        }
+
+        if (!string.IsNullOrWhiteSpace(connectionString))
+        {
+            aliases["ConnectionStrings:Default"] = connectionString;
+        }
+    }
+
+    return aliases;
+}
+
+static void AddAlias(
+    IDictionary<string, string?> aliases,
+    string configurationKey,
+    params string[] environmentKeys)
+{
+    foreach (string environmentKey in environmentKeys)
+    {
+        string? value = Environment.GetEnvironmentVariable(environmentKey);
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            aliases[configurationKey] = value;
+            return;
+        }
+    }
+}
+
+static string? BuildPostgresConnectionString()
+{
+    string host = Environment.GetEnvironmentVariable("POSTGRES_HOST") ?? "localhost";
+    string port = Environment.GetEnvironmentVariable("POSTGRES_PORT") ?? "5432";
+    string database = Environment.GetEnvironmentVariable("POSTGRES_DB") ?? "poseidon";
+    string? username = Environment.GetEnvironmentVariable("POSTGRES_APP_USER");
+    string? password = Environment.GetEnvironmentVariable("POSTGRES_APP_PASSWORD");
+
+    if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+    {
+        return null;
+    }
+
+    return $"Host={host};Port={port};Database={database};Username={username};Password={password}";
+}
+
+static string UnquoteEnvValue(string value)
+{
+    if (value.Length >= 2 &&
+        ((value[0] == '"' && value[^1] == '"') ||
+        (value[0] == '\'' && value[^1] == '\'')))
+    {
+        return value[1..^1];
+    }
+
+    return value;
 }
 
 public partial class Program;
