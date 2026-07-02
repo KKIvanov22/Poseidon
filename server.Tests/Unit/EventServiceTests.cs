@@ -270,6 +270,92 @@ public sealed class EventServiceTests
         Assert.Equal(0, orchestrator.RegisterCallCount);
     }
 
+    [Fact]
+    public async Task CreateAsync_ZeroCapacity_ReturnsBadRequestAndDoesNotPersist()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        EventOperationResult<Event> result = await service.CreateAsync(
+            Guid.NewGuid(),
+            ValidDetails(capacity: 0));
+
+        Assert.Equal(EventOperationStatus.BadRequest, result.Status);
+        Assert.Equal("Capacity must contain at least 1 seat.", result.Problem);
+        Assert.Equal(0, await dbContext.Events.CountAsync());
+    }
+
+    [Fact]
+    public async Task UpdateAsync_PublishedEvent_ReturnsBadRequestAndLeavesEventUnchanged()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        Guid organizerId = Guid.NewGuid();
+        Event existing = AddEvent(dbContext, organizerId, "Published", statusId: 2);
+        await dbContext.SaveChangesAsync();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        EventOperationResult<Event> result = await service.UpdateAsync(
+            existing.EventId,
+            organizerId,
+            ValidDetails(title: "Changed"));
+
+        Event savedEvent = await dbContext.Events.SingleAsync();
+        Assert.Equal(EventOperationStatus.BadRequest, result.Status);
+        Assert.Equal("Only draft events can be modified.", result.Problem);
+        Assert.Equal("Published", savedEvent.Title);
+        Assert.Null(savedEvent.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task GetAllSortedAsync_StudentSeesPublishedEventsOnlyOrderedByTitle()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        AddEvent(dbContext, Guid.NewGuid(), "Zoo", statusId: 2);
+        AddEvent(dbContext, Guid.NewGuid(), "Draft", statusId: 1);
+        AddEvent(dbContext, Guid.NewGuid(), "Alpha", statusId: 2);
+        await dbContext.SaveChangesAsync();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        List<Event> events = await service.GetAllSortedAsync(EventListSort.TitleAscending, null, "Student");
+
+        Assert.Equal(new[] { "Alpha", "Zoo" }, events.Select(e => e.Title));
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_TeacherCannotSeeAnotherOrganizerEvent()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        Guid viewerId = Guid.NewGuid();
+        Event existing = AddEvent(dbContext, Guid.NewGuid(), "Other teacher event", statusId: 2);
+        await dbContext.SaveChangesAsync();
+        var service = new EventService(dbContext, new FakeRegistrationOrchestrator());
+
+        Event? result = await service.GetByIdAsync(existing.EventId, viewerId, "Teacher");
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task RegisterAsync_PublishedEvent_ReturnsOrchestratedRegistration()
+    {
+        await using AppDbContext dbContext = CreateInMemoryDbContext();
+        Guid registrationId = Guid.NewGuid();
+        Guid studentId = Guid.NewGuid();
+        Event existing = AddEvent(dbContext, Guid.NewGuid(), "Published", statusId: 2);
+        await dbContext.SaveChangesAsync();
+        var orchestrator = new FakeRegistrationOrchestrator(registrationId, statusId: 2);
+        var service = new EventService(dbContext, orchestrator);
+
+        EventOperationResult<RegistrationResult> result = await service.RegisterAsync(existing.EventId, studentId);
+
+        Assert.Equal(EventOperationStatus.Success, result.Status);
+        Assert.Equal(1, orchestrator.RegisterCallCount);
+        Assert.Equal(registrationId, result.Value!.RegistrationId);
+        Assert.Equal(existing.EventId, result.Value.EventId);
+        Assert.Equal(studentId, result.Value.StudentId);
+        Assert.Equal(2, result.Value.RegistrationStatusId);
+    }
+
     private static AppDbContext CreateInMemoryDbContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
@@ -309,9 +395,7 @@ public sealed class EventServiceTests
         return ev;
     }
 
-    private sealed class FakeRegistrationOrchestrator(
-        Guid? registrationId = null,
-        int statusId = 1) : IRegistrationOrchestrator
+    private sealed class FakeRegistrationOrchestrator(Guid? registrationId = null, int statusId = 1) : IRegistrationOrchestrator
     {
         public int RegisterCallCount { get; private set; }
 
