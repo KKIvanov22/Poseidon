@@ -6,7 +6,9 @@ import SignUp from './SignUp';
 import StudentDashboard from './pages/StudentDashboard';
 import TeacherDashboard from './pages/TeacherDashboard';
 import AdminDashboard from './pages/AdminDashboard';
+import UserProfilePage from './pages/UserProfilePage';
 import { getDashboardPath, ROLES } from './lib/roles';
+import { ThemeProvider } from './theme/ThemeContext';
 
 function RootRedirect() {
   const { isAuthenticated, user } = useAuth();
@@ -68,6 +70,14 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/profile"
+        element={
+          <ProtectedRoute allowedRoles={[ROLES.STUDENT, ROLES.TEACHER, ROLES.ADMIN]}>
+            <UserProfilePage />
+          </ProtectedRoute>
+        }
+      />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -78,7 +88,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <ThemeProvider>
+          <AppRoutes />
+        </ThemeProvider>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -84,6 +84,9 @@ export const cancelRegistration = (token, registrationId) =>
 // Users
 export const getCurrentUser = (token) => request('/users/me', { token });
 
+export const changePassword = (token, payload) =>
+  request('/users/me/password', { method: 'PATCH', token, body: payload });
+
 export const listUsers = (token) => request('/users', { token });
 
 export const updateUserRole = (token, userId, role) =>

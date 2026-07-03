@@ -13,6 +13,23 @@
 body {
   font-family: "Quicksand", sans-serif;
   color: #333;
+  background-color: #f5f7fb;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'], body[data-theme='dark'] {
+  color-scheme: dark;
+  background-color: #020617;
+  color: #f8fafc;
+}
+
+body.theme-dark {
+  background-color: #020617;
+  color: #f8fafc;
 }
 
 .content {
@@ -70,8 +87,8 @@ body {
 }
 
 .login-form input:focus {
-  border-color: #226abd;
-  box-shadow: 0 0 0 4px rgba(241, 53, 109, 0.08);
+  border-color: #0891b2;
+  box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.08);
 }
 
 .login-form button {
@@ -79,7 +96,7 @@ body {
   padding: 14px 18px;
   border: none;
   border-radius: 12px;
-  background: #226abd;;
+  background: #06b6d4;
   color: white;
   font-weight: 700;
   cursor: pointer;
@@ -88,6 +105,6 @@ body {
 }
 
 .login-form button:hover {
-  background: #226abd;
+  background: #0891b2;
 }
 
